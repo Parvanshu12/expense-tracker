@@ -19,6 +19,10 @@ export interface Profile {
   timezone: string;
   language: string;
   monthly_income: number | null;
+  /** Ids from src/lib/main-goals.ts. */
+  main_goals?: string[];
+  /** Id from src/lib/user-types.ts. */
+  user_type?: string | null;
   created_at: string;
   updated_at: string;
 }

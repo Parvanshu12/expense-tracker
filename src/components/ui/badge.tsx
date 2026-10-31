@@ -11,13 +11,14 @@ const badgeVariants = cva(
         secondary: 'border-transparent bg-secondary text-secondary-foreground',
         outline: 'border-border text-muted-foreground',
         destructive: 'border-destructive/30 bg-destructive/10 text-destructive',
-        // Status levels, distinguished by weight rather than hue.
-        success: 'border-border bg-card text-foreground',
-        warning: 'border-foreground/25 bg-secondary text-foreground',
-        // Essentiality: solid -> soft -> outlined.
-        essential: 'border-transparent bg-foreground text-background',
-        optimizable: 'border-transparent bg-secondary text-foreground',
-        discretionary: 'border-dashed border-foreground/35 text-muted-foreground',
+        // Status levels.
+        success: 'border-transparent bg-success/12 text-success',
+        warning: 'border-transparent bg-warning/14 text-warning',
+        info: 'border-transparent bg-info/12 text-info',
+        // Spending types.
+        essential: 'border-transparent bg-essential/12 text-essential',
+        optimizable: 'border-transparent bg-trim/15 text-trim',
+        discretionary: 'border-transparent bg-optional/12 text-optional',
       },
     },
     defaultVariants: { variant: 'secondary' },

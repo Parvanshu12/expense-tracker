@@ -12,6 +12,7 @@ import {
   FileText,
   Target,
   LineChart,
+  CalendarRange,
   Settings,
   LogOut,
   X,
@@ -25,23 +26,23 @@ export const navigationGroups = [
   {
     label: null,
     items: [
-      { name: 'Overview', href: '/dashboard', icon: LayoutGrid },
-      { name: 'Transactions', href: '/transactions', icon: ArrowLeftRight },
-      { name: 'Add expense', href: '/add-expense', icon: Plus },
+      { name: 'Home', href: '/dashboard', icon: LayoutGrid },
+      { name: 'My spending', href: '/transactions', icon: ArrowLeftRight },
+      { name: 'Timeline', href: '/timeline', icon: CalendarRange },
     ],
   },
   {
-    label: 'Plan',
+    label: 'Plan ahead',
     items: [
       { name: 'Budgets', href: '/budgets', icon: Gauge },
-      { name: 'Goals', href: '/goals', icon: Target },
-      { name: 'Wealth simulator', href: '/wealth-simulator', icon: LineChart },
+      { name: 'Savings goals', href: '/goals', icon: Target },
+      { name: 'Future planner', href: '/wealth-simulator', icon: LineChart },
     ],
   },
   {
-    label: 'Understand',
+    label: 'Get help',
     items: [
-      { name: 'AI coach', href: '/insights', icon: Sparkles },
+      { name: 'Ask for advice', href: '/insights', icon: Sparkles },
       { name: 'Reports', href: '/reports', icon: FileText },
     ],
   },
@@ -83,6 +84,19 @@ export function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: () =>
           </button>
         </div>
 
+        <div className="px-3 pt-1 pb-2">
+          <Link
+            href="/add-expense"
+            onClick={onClose}
+            className={cn(
+              'flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary text-sm font-medium text-primary-foreground shadow-card transition-colors hover:bg-primary/90',
+              pathname === '/add-expense' && 'ring-2 ring-primary/30 ring-offset-2 ring-offset-background'
+            )}
+          >
+            <Plus className="size-4" /> Add spending
+          </Link>
+        </div>
+
         <nav className="flex-1 space-y-5 overflow-y-auto px-2 py-3">
           {navigationGroups.map((group, i) => (
             <div key={i} className="space-y-0.5">
@@ -101,13 +115,13 @@ export function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: () =>
                     href={item.href}
                     onClick={onClose}
                     className={cn(
-                      'group flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors',
+                      'group flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors',
                       active
-                        ? 'bg-accent font-medium text-foreground'
-                        : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+                        ? 'bg-primary/10 font-medium text-primary'
+                        : 'text-muted-foreground hover:bg-accent hover:text-foreground'
                     )}
                   >
-                    <Icon className={cn('size-4', active ? 'text-foreground' : 'text-subtle group-hover:text-foreground')} />
+                    <Icon className={cn('size-4', active ? 'text-primary' : 'text-subtle group-hover:text-foreground')} />
                     {item.name}
                   </Link>
                 );
@@ -121,17 +135,17 @@ export function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: () =>
             href="/settings"
             onClick={onClose}
             className={cn(
-              'flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors',
+              'flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors',
               pathname === '/settings'
-                ? 'bg-accent font-medium text-foreground'
-                : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+                ? 'bg-primary/10 font-medium text-primary'
+                : 'text-muted-foreground hover:bg-accent hover:text-foreground'
             )}
           >
             <Settings className="size-4 text-subtle" />
             Settings
           </Link>
           <div className="mt-1 flex items-center gap-2.5 rounded-md px-2.5 py-2">
-            <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-foreground text-[11px] font-semibold text-background">
+            <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
               {name.slice(0, 1).toUpperCase()}
             </div>
             <div className="min-w-0 flex-1">

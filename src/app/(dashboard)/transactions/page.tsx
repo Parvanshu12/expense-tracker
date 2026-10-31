@@ -28,7 +28,8 @@ import {
   Laptop,
   Building2,
   Coins,
-  ArrowUpRight,
+  ArrowDownLeft,
+  Wallet,
   type LucideIcon,
 } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -44,7 +45,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { DataService, DEFAULT_SYSTEM_CATEGORIES } from '@/lib/data-service';
 import { Transaction, Category, Essentiality } from '@/types/database';
 import { toLocalDateString } from '@/lib/calculations/finance';
-import { formatCurrency } from '@/lib/utils';
+import { PURCHASE_KINDS, kindForCategory, kindForTransaction } from '@/lib/categories/kinds';
+import { cn, formatCurrency } from '@/lib/utils';
 import { toast } from 'sonner';
 
 type TypeFilter = 'all' | 'expense' | 'income';
@@ -52,8 +54,8 @@ type SortBy = 'date_desc' | 'date_asc' | 'amount_desc' | 'amount_asc';
 
 const ESSENTIALITY_LABELS: Record<Essentiality, string> = {
   essential: 'Essential',
-  optimizable: 'Optimizable',
-  discretionary: 'Discretionary',
+  optimizable: 'Could trim',
+  discretionary: 'Optional',
 };
 
 const CATEGORY_ICONS: Record<string, LucideIcon> = {
@@ -78,6 +80,7 @@ const CATEGORY_ICONS: Record<string, LucideIcon> = {
   Laptop,
   Building2,
   Coins,
+  Wallet,
 };
 
 const PAYMENT_METHODS = ['UPI', 'Credit Card', 'Debit Card', 'Net Banking', 'Cash'];
@@ -183,7 +186,7 @@ export default function TransactionsPage() {
             t.id === updated.id ? { ...updated, category: categories.find((c) => c.id === updated.category_id) } : t
           )
         );
-        toast.success('Transaction updated');
+        toast.success('Changes saved');
         setEditingTransaction(null);
       }
     } catch (err) {
@@ -218,9 +221,9 @@ export default function TransactionsPage() {
       const ok = await DataService.deleteTransaction(id);
       if (ok) {
         setTransactions((prev) => prev.filter((t) => t.id !== id));
-        toast.success('Transaction deleted');
+        toast.success('Entry deleted');
       } else {
-        toast.error('Could not delete transaction');
+        toast.error('Could not delete this entry');
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Deletion error');
@@ -299,7 +302,7 @@ export default function TransactionsPage() {
   const newExpenseLink = (
     <Link href="/add-expense" className={buttonVariants()}>
       <Plus />
-      New expense
+      Add an expense
     </Link>
   );
 
@@ -313,9 +316,13 @@ export default function TransactionsPage() {
           </div>
           <Skeleton className="h-9 w-32 rounded-lg" />
         </div>
-        <div className="flex flex-col gap-2 lg:flex-row">
-          <Skeleton className="h-9 flex-1 rounded-lg" />
-          <Skeleton className="h-9 w-full rounded-lg lg:w-96" />
+        <div className="space-y-3">
+          <Skeleton className="h-9 w-full rounded-lg" />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-14 rounded-lg" />
+            ))}
+          </div>
         </div>
         {[0, 1].map((g) => (
           <div key={g} className="space-y-2">
@@ -323,7 +330,7 @@ export default function TransactionsPage() {
             <Card className="divide-y divide-border">
               {[0, 1, 2].map((r) => (
                 <div key={r} className="flex items-center gap-3 px-4 py-3">
-                  <Skeleton className="size-8 rounded-lg" />
+                  <Skeleton className="size-9 rounded-lg" />
                   <div className="flex-1 space-y-1.5">
                     <Skeleton className="h-4 w-1/3" />
                     <Skeleton className="h-3 w-1/4" />
@@ -340,13 +347,15 @@ export default function TransactionsPage() {
 
   const description =
     transactions.length === 0
-      ? 'Every expense and income entry in one ledger.'
-      : `${hasFilters ? `${filteredTransactions.length} of ${transactions.length}` : transactions.length} transactions · ${formatCurrency(totalSpent)} spent`;
+      ? 'Everything you spend and receive, in one place.'
+      : hasFilters
+        ? `Showing ${filteredTransactions.length} of ${transactions.length} entries · ${formatCurrency(totalSpent)} spent`
+        : `${transactions.length} ${transactions.length === 1 ? 'entry' : 'entries'} · ${formatCurrency(totalSpent)} spent`;
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Transactions"
+        title="My spending"
         description={<span className="tabular">{description}</span>}
         actions={newExpenseLink}
       />
@@ -354,40 +363,40 @@ export default function TransactionsPage() {
       {transactions.length === 0 ? (
         <EmptyState
           icon={<ReceiptIndianRupee />}
-          title="No transactions yet"
-          description="Log your first expense and it will show up here."
+          title="Nothing here yet"
+          description="Add your first expense and it will show up here, grouped by day."
           action={newExpenseLink}
         />
       ) : (
         <>
           {/* Toolbar */}
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-center animate-rise">
-            <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />
+          <div className="space-y-3 animate-rise">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 type="search"
-                placeholder="Search description, merchant or category"
-                aria-label="Search transactions"
+                placeholder="Search by what you bought, the shop or the category"
+                aria-label="Search your spending"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-9"
               />
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:flex">
-              <div className="lg:w-32">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Field label="Show" htmlFor="filter-type">
                 <Select
-                  aria-label="Type"
+                  id="filter-type"
                   value={typeFilter}
                   onChange={(e) => setTypeFilter(e.target.value as TypeFilter)}
                 >
-                  <option value="all">All types</option>
-                  <option value="expense">Expenses</option>
-                  <option value="income">Income</option>
+                  <option value="all">Everything</option>
+                  <option value="expense">Money out</option>
+                  <option value="income">Money in</option>
                 </Select>
-              </div>
-              <div className="lg:w-40">
+              </Field>
+              <Field label="Category" htmlFor="filter-category">
                 <Select
-                  aria-label="Category"
+                  id="filter-category"
                   value={categoryFilter}
                   onChange={(e) => setCategoryFilter(e.target.value)}
                 >
@@ -399,7 +408,7 @@ export default function TransactionsPage() {
                       </option>
                     ))}
                   </optgroup>
-                  <optgroup label="Income">
+                  <optgroup label="Money in">
                     {incomeCategories.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
@@ -407,27 +416,27 @@ export default function TransactionsPage() {
                     ))}
                   </optgroup>
                 </Select>
-              </div>
-              <div className="lg:w-36">
+              </Field>
+              <Field label="Type of spending" htmlFor="filter-essentiality">
                 <Select
-                  aria-label="Essentiality"
+                  id="filter-essentiality"
                   value={essentialityFilter}
                   onChange={(e) => setEssentialityFilter(e.target.value)}
                 >
-                  <option value="all">Any need</option>
+                  <option value="all">Any type</option>
                   <option value="essential">Essential</option>
-                  <option value="optimizable">Optimizable</option>
-                  <option value="discretionary">Discretionary</option>
+                  <option value="optimizable">Could trim</option>
+                  <option value="discretionary">Optional</option>
                 </Select>
-              </div>
-              <div className="lg:w-36">
-                <Select aria-label="Sort" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)}>
+              </Field>
+              <Field label="Order" htmlFor="filter-sort">
+                <Select id="filter-sort" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)}>
                   <option value="date_desc">Newest first</option>
                   <option value="date_asc">Oldest first</option>
-                  <option value="amount_desc">Highest amount</option>
-                  <option value="amount_asc">Lowest amount</option>
+                  <option value="amount_desc">Biggest amount first</option>
+                  <option value="amount_asc">Smallest amount first</option>
                 </Select>
-              </div>
+              </Field>
             </div>
           </div>
 
@@ -435,9 +444,9 @@ export default function TransactionsPage() {
             <EmptyState
               icon={<SearchX />}
               title="Nothing matches your filters"
-              description="Try a different search, or clear the filters to see every transaction."
+              description="Try a different word, or clear the filters to see everything again."
               action={
-                <Button variant="outline" size="sm" onClick={clearFilters}>
+                <Button variant="outline" onClick={clearFilters}>
                   Clear filters
                 </Button>
               }
@@ -448,8 +457,15 @@ export default function TransactionsPage() {
                 <section key={group.key}>
                   {group.label && (
                     <div className="sticky top-14 z-10 -mx-1 flex items-center justify-between bg-background/85 px-1 py-2 backdrop-blur">
-                      <h2 className="text-xs font-medium text-muted-foreground">{group.label}</h2>
-                      <span className="tabular text-xs text-muted-foreground">{formatSigned(group.net)}</span>
+                      <h2 className="text-[13px] font-medium text-foreground">{group.label}</h2>
+                      <span
+                        className={cn(
+                          'tabular text-xs font-medium',
+                          group.net > 0 ? 'text-success' : 'text-muted-foreground'
+                        )}
+                      >
+                        {formatSigned(group.net)}
+                      </span>
                     </div>
                   )}
                   <Card className="divide-y divide-border overflow-hidden">
@@ -474,8 +490,8 @@ export default function TransactionsPage() {
       <Dialog
         open={!!editingTransaction}
         onClose={closeEdit}
-        title="Edit transaction"
-        description="Changes update your budgets and reports."
+        title="Edit entry"
+        description="Your budgets and reports update straight away."
         className="max-w-lg"
         footer={
           <>
@@ -518,7 +534,7 @@ export default function TransactionsPage() {
                     </option>
                   ))}
                 </optgroup>
-                <optgroup label="Income">
+                <optgroup label="Money in">
                   {incomeCategories.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -527,18 +543,18 @@ export default function TransactionsPage() {
                 </optgroup>
               </Select>
             </Field>
-            <Field label="Essentiality" htmlFor="edit-essentiality">
+            <Field label="Type of spending" htmlFor="edit-essentiality">
               <Select
                 id="edit-essentiality"
                 value={editEssentiality}
                 onChange={(e) => setEditEssentiality(e.target.value as Essentiality)}
               >
                 <option value="essential">Essential</option>
-                <option value="optimizable">Optimizable</option>
-                <option value="discretionary">Discretionary</option>
+                <option value="optimizable">Could trim</option>
+                <option value="discretionary">Optional</option>
               </Select>
             </Field>
-            <Field label="Merchant" htmlFor="edit-merchant">
+            <Field label="Shop or person" htmlFor="edit-merchant">
               <Input
                 id="edit-merchant"
                 type="text"
@@ -564,8 +580,8 @@ export default function TransactionsPage() {
       <Dialog
         open={!!deletingId}
         onClose={closeDelete}
-        title="Delete transaction?"
-        description="It will be removed from your ledger, budgets and reports. This can't be undone."
+        title="Delete this entry?"
+        description="It will be removed from your spending, budgets and reports. This can't be undone."
         footer={
           <>
             <Button variant="outline" onClick={closeDelete}>
@@ -580,7 +596,12 @@ export default function TransactionsPage() {
         {deletingTx && (
           <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted px-3 py-2.5 text-sm">
             <span className="truncate text-foreground">{deletingTx.description}</span>
-            <span className="tabular shrink-0 font-medium">
+            <span
+              className={cn(
+                'tabular shrink-0 font-medium',
+                deletingTx.transaction_type === 'income' ? 'text-success' : 'text-foreground'
+              )}
+            >
               {deletingTx.transaction_type === 'income' ? '+' : ''}
               {formatCurrency(Number(deletingTx.amount))}
             </span>
@@ -603,12 +624,17 @@ function TransactionRow({
   onDelete: () => void;
 }) {
   const isIncome = tx.transaction_type === 'income';
-  const Icon = (category?.icon && CATEGORY_ICONS[category.icon]) || (isIncome ? ArrowUpRight : ReceiptIndianRupee);
+  const Icon = (category?.icon && CATEGORY_ICONS[category.icon]) || (isIncome ? ArrowDownLeft : ReceiptIndianRupee);
+  const kind = PURCHASE_KINDS[isIncome ? 'income' : category ? kindForCategory(category) : kindForTransaction(tx)];
   const meta = [tx.merchant, category?.name ?? 'Uncategorized', tx.payment_method].filter(Boolean).join(' · ');
 
   return (
     <div className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/50">
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
+      <div
+        className="flex size-9 shrink-0 items-center justify-center rounded-lg"
+        style={{ background: `${kind.color}1f`, color: kind.color }}
+        title={kind.label}
+      >
         <Icon className="size-4" />
       </div>
 
@@ -619,7 +645,7 @@ function TransactionRow({
           </p>
           {tx.entry_method !== 'manual' && (
             <span title={`Captured with ${tx.entry_method === 'ai_voice' ? 'voice' : 'AI text'}`} className="shrink-0">
-              <Sparkles className="size-3 text-subtle" aria-label="AI captured" />
+              <Sparkles className="size-3 text-primary" aria-label="AI captured" />
             </span>
           )}
         </div>
@@ -632,20 +658,25 @@ function TransactionRow({
         </Badge>
       )}
 
-      <div className="tabular w-24 shrink-0 text-right text-sm font-medium text-foreground sm:w-28">
+      <div
+        className={cn(
+          'tabular w-24 shrink-0 text-right text-sm font-medium sm:w-28',
+          isIncome ? 'text-success' : 'text-foreground'
+        )}
+      >
         {isIncome ? '+' : ''}
         {formatCurrency(Number(tx.amount))}
       </div>
 
       <div className="-mr-2 flex shrink-0 items-center transition-opacity sm:pointer-fine:opacity-0 sm:pointer-fine:group-hover:opacity-100 sm:pointer-fine:group-focus-within:opacity-100">
-        <Button variant="ghost" size="icon-sm" onClick={onEdit} aria-label="Edit transaction" title="Edit">
+        <Button variant="ghost" size="icon" onClick={onEdit} aria-label="Edit entry" title="Edit">
           <Pencil />
         </Button>
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon"
           onClick={onDelete}
-          aria-label="Delete transaction"
+          aria-label="Delete entry"
           title="Delete"
           className="hover:text-destructive"
         >

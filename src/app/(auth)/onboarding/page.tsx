@@ -11,6 +11,8 @@ import { Field, Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Logo } from '@/components/layout/logo';
 import { DataService } from '@/lib/data-service';
+import { MAIN_GOALS, type MainGoalId } from '@/lib/main-goals';
+import { USER_TYPES, type UserTypeId } from '@/lib/user-types';
 import { toLocalDateString } from '@/lib/calculations/finance';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -20,34 +22,30 @@ const LANGUAGES = [
   { id: 'hinglish', label: 'Hinglish', hint: 'Hindi and English mix' },
 ];
 
-const GOALS = [
-  { id: 'track_expenses', label: 'Understand where my money goes' },
-  { id: 'cut_unnecessary', label: 'Cut spending I don’t need' },
-  { id: 'emergency_fund', label: 'Build a 6-month emergency fund' },
-  { id: 'grow_wealth', label: 'Grow my long-term savings' },
-];
 
-/** Selectable row used for language and goal choices. */
+/** Selectable row: a radio for single choices, a checkbox when `multiple`. */
 function Choice({
   selected,
   onSelect,
   label,
   hint,
+  multiple,
 }: {
   selected: boolean;
   onSelect: () => void;
   label: string;
   hint?: string;
+  multiple?: boolean;
 }) {
   return (
     <button
       type="button"
-      role="radio"
+      role={multiple ? 'checkbox' : 'radio'}
       aria-checked={selected}
       onClick={onSelect}
       className={cn(
         'flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors',
-        selected ? 'border-foreground bg-accent/60' : 'border-border bg-card hover:bg-accent/50'
+        selected ? 'border-primary bg-primary/5' : 'border-border bg-card hover:bg-accent/50'
       )}
     >
       <span className="min-w-0">
@@ -56,8 +54,9 @@ function Choice({
       </span>
       <span
         className={cn(
-          'flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors',
-          selected ? 'border-foreground bg-foreground text-background' : 'border-input'
+          'flex size-4 shrink-0 items-center justify-center border transition-colors',
+          multiple ? 'rounded-[4px]' : 'rounded-full',
+          selected ? 'border-primary bg-primary text-primary-foreground' : 'border-input'
         )}
       >
         {selected && <Check className="size-2.5" strokeWidth={3} />}
@@ -78,7 +77,26 @@ export default function OnboardingPage() {
   const [language, setLanguage] = useState('en');
   const [monthlyIncome, setMonthlyIncome] = useState<string>('');
   const [monthlyBudget, setMonthlyBudget] = useState<string>('');
-  const [primaryGoal, setPrimaryGoal] = useState<string>('track_expenses');
+  const [mainGoals, setMainGoals] = useState<MainGoalId[]>(['track_expenses']);
+  const [goalsTouched, setGoalsTouched] = useState(false);
+  const [userType, setUserType] = useState<UserTypeId | null>(null);
+  const toggleGoal = (id: MainGoalId) => {
+    setGoalsTouched(true);
+    setMainGoals((prev) => (prev.includes(id) ? prev.filter((g) => g !== id) : [...prev, id]));
+  };
+  const chooseUserType = (id: UserTypeId) => {
+    setUserType(id);
+    // Suggest goals that usually fit, unless the user already picked their own.
+    if (!goalsTouched) setMainGoals([...(USER_TYPES.find((t) => t.id === id)?.goals ?? ['track_expenses'])]);
+  };
+  const incomeLabel =
+    userType === 'student'
+      ? 'Pocket money or allowance each month'
+      : userType === 'business' || userType === 'freelancer'
+        ? 'Roughly what you earn in a month'
+        : userType === 'retired'
+          ? 'Pension or income each month'
+          : 'Monthly income';
 
   const handleFinish = async () => {
     setLoading(true);
@@ -89,6 +107,8 @@ export default function OnboardingPage() {
         timezone,
         language,
         monthly_income: monthlyIncome ? parseFloat(monthlyIncome) : null,
+        main_goals: mainGoals,
+        user_type: userType,
       });
 
       if (monthlyBudget) {
@@ -103,8 +123,8 @@ export default function OnboardingPage() {
         });
       }
 
-      // If user selected emergency fund or specific goal
-      if (primaryGoal === 'emergency_fund') {
+      // An emergency fund is concrete enough to set up as a savings goal straight away.
+      if (mainGoals.includes('emergency_fund')) {
         await DataService.addGoal({
           user_id: 'current-user',
           name: 'Emergency Reserve Fund',
@@ -169,6 +189,22 @@ export default function OnboardingPage() {
                   />
                 </Field>
 
+                <div className="flex flex-col gap-1.5">
+                  <Label id="type-label">Which best describes you?</Label>
+                  <p className="text-xs text-muted-foreground">So the tips and questions fit your life.</p>
+                  <div role="radiogroup" aria-labelledby="type-label" className="grid gap-2 sm:grid-cols-2">
+                    {USER_TYPES.map((t) => (
+                      <Choice
+                        key={t.id}
+                        selected={userType === t.id}
+                        onSelect={() => chooseUserType(t.id)}
+                        label={t.label}
+                        hint={t.hint}
+                      />
+                    ))}
+                  </div>
+                </div>
+
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field label="Currency" htmlFor="currency">
                     <Select id="currency" value={currency} onChange={(e) => setCurrency(e.target.value)}>
@@ -223,7 +259,7 @@ export default function OnboardingPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="Monthly income" htmlFor="income" hint="Used to work out your savings rate.">
+                  <Field label={incomeLabel} htmlFor="income" hint="A rough number is fine. It helps us tell how you are doing.">
                     <Input
                       id="income"
                       type="number"
@@ -251,18 +287,20 @@ export default function OnboardingPage() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <Label id="goal-label">Main goal</Label>
-                  <div role="radiogroup" aria-labelledby="goal-label" className="flex flex-col gap-2">
-                    {GOALS.map((g) => (
+                  <Label id="goal-label">What would you like help with?</Label>
+                  <p className="text-xs text-muted-foreground">Pick as many as you like.</p>
+                  <div role="group" aria-labelledby="goal-label" className="flex flex-col gap-2">
+                    {MAIN_GOALS.map((g) => (
                       <Choice
                         key={g.id}
-                        selected={primaryGoal === g.id}
-                        onSelect={() => setPrimaryGoal(g.id)}
+                        multiple
+                        selected={mainGoals.includes(g.id)}
+                        onSelect={() => toggleGoal(g.id)}
                         label={g.label}
                       />
                     ))}
                   </div>
-                  {primaryGoal === 'emergency_fund' && (
+                  {mainGoals.includes('emergency_fund') && (
                     <p className="text-xs text-muted-foreground">
                       We’ll create a savings goal for six months of income.
                     </p>

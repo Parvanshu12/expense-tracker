@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Download, Printer } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Download, Gauge, PiggyBank, Printer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { Segmented } from '@/components/ui/segmented';
@@ -9,12 +9,14 @@ import { Stat } from '@/components/ui/stat';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DataService } from '@/lib/data-service';
+import { PURCHASE_KINDS, kindForCategory, kindForTransaction } from '@/lib/categories/kinds';
 import { Transaction, Budget } from '@/types/database';
 import {
   calculateFinancialSummary,
   calculateCategoryBreakdown,
   calculateEssentialityBreakdown,
   calculatePotentialSavings,
+  getBudgetStatus,
   getReportingPeriodRange,
   filterTransactionsByDateRange,
   toLocalDateString,
@@ -26,10 +28,10 @@ import { toast } from 'sonner';
 type ReportType = 'weekly' | 'monthly' | 'quarterly' | 'annual';
 
 const REPORT_OPTIONS: { value: ReportType; label: string }[] = [
-  { value: 'weekly', label: 'Weekly' },
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'quarterly', label: 'Quarterly' },
-  { value: 'annual', label: 'Annual' },
+  { value: 'weekly', label: '7 days' },
+  { value: 'monthly', label: 'This month' },
+  { value: 'quarterly', label: '3 months' },
+  { value: 'annual', label: 'This year' },
 ];
 
 const REPORT_PERIOD: Record<ReportType, DashboardPeriod> = {
@@ -42,8 +44,8 @@ const REPORT_PERIOD: Record<ReportType, DashboardPeriod> = {
 const REPORT_TITLE: Record<ReportType, string> = {
   weekly: 'Weekly report',
   monthly: 'Monthly report',
-  quarterly: 'Quarterly report',
-  annual: 'Annual report',
+  quarterly: '3-month report',
+  annual: 'Yearly report',
 };
 
 const REPORT_SCOPE: Record<ReportType, string> = {
@@ -55,6 +57,31 @@ const REPORT_SCOPE: Record<ReportType, string> = {
 
 // Make thin bars survive printing (browsers drop backgrounds by default).
 const PRINT_EXACT = '[print-color-adjust:exact] [-webkit-print-color-adjust:exact]';
+
+type Tone = 'success' | 'warning' | 'danger';
+
+const TONE_TEXT: Record<Tone, string> = {
+  success: 'text-success',
+  warning: 'text-warning',
+  danger: 'text-destructive',
+};
+
+const TONE_TILE: Record<Tone, string> = {
+  success: 'bg-success/12 text-success',
+  warning: 'bg-warning/14 text-warning',
+  danger: 'bg-destructive/10 text-destructive',
+};
+
+function budgetTone(pct: number): Tone {
+  const status = getBudgetStatus(pct);
+  if (status === 'on_track') return 'success';
+  if (status === 'warning') return 'warning';
+  return 'danger';
+}
+
+function expenseKindColor(categoryId: string, categoryName: string): string {
+  return PURCHASE_KINDS[kindForCategory({ id: categoryId, name: categoryName, category_type: 'expense' })].color;
+}
 
 function formatDay(dateStr: string): string {
   if (!dateStr) return '';
@@ -184,19 +211,28 @@ export default function ReportsPage() {
   const hasData = reportTransactions.length > 0;
   const hasExpenses = summary.totalExpenses > 0;
   const savingsRate = summary.totalIncome > 0 ? (summary.actualSavings / summary.totalIncome) * 100 : null;
+  const tone = budgetTone(summary.budgetUtilization);
   const essentialityRows = [
-    { label: 'Essential', amount: essentiality.essential, pct: essentiality.essentialPct, color: 'var(--chart-1)' },
     {
-      label: 'Optimizable',
-      amount: essentiality.optimizable,
-      pct: essentiality.optimizablePct,
-      color: 'var(--chart-2)',
+      label: 'Essential',
+      hint: 'Rent, bills, groceries',
+      amount: essentiality.essential,
+      pct: essentiality.essentialPct,
+      color: 'var(--essential)',
     },
     {
-      label: 'Discretionary',
+      label: 'Could trim',
+      hint: 'Worth a second look',
+      amount: essentiality.optimizable,
+      pct: essentiality.optimizablePct,
+      color: 'var(--trim)',
+    },
+    {
+      label: 'Optional',
+      hint: 'Treats and nice-to-haves',
       amount: essentiality.discretionary,
       pct: essentiality.discretionaryPct,
-      color: 'var(--chart-4)',
+      color: 'var(--optional)',
     },
   ];
 
@@ -205,15 +241,17 @@ export default function ReportsPage() {
       <PageHeader
         className="print:hidden"
         title="Reports"
-        description="A printable statement of your income and spending."
+        description="A summary of your money in and out that you can print or download."
         actions={
           <>
-            <Segmented value={reportType} onChange={setReportType} options={REPORT_OPTIONS} size="sm" />
-            <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={!hasData}>
+            <div className="-mx-1 max-w-full overflow-x-auto px-1 py-0.5 [&_button]:h-9 [&_button]:whitespace-nowrap">
+              <Segmented value={reportType} onChange={setReportType} options={REPORT_OPTIONS} />
+            </div>
+            <Button variant="outline" onClick={handleExportCSV} disabled={!hasData}>
               <Download />
-              Export CSV
+              Download CSV
             </Button>
-            <Button variant="ghost" size="sm" onClick={handlePrint}>
+            <Button variant="ghost" onClick={handlePrint}>
               <Printer />
               Print
             </Button>
@@ -234,7 +272,7 @@ export default function ReportsPage() {
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs sm:text-right">
             <dt className="text-muted-foreground">Generated</dt>
             <dd className="tabular text-foreground">{formatDay(today)}</dd>
-            <dt className="text-muted-foreground">Transactions</dt>
+            <dt className="text-muted-foreground">Entries</dt>
             <dd className="tabular text-foreground">{reportTransactions.length}</dd>
             <dt className="text-muted-foreground">Currency</dt>
             <dd className="text-foreground">INR</dd>
@@ -245,42 +283,75 @@ export default function ReportsPage() {
           {/* Summary */}
           <Section title="Summary">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 print:grid-cols-4">
-              <Stat label="Income" value={formatCurrency(summary.totalIncome)} className="shadow-none" />
-              <Stat label="Expenses" value={formatCurrency(summary.totalExpenses)} className="shadow-none" />
               <Stat
-                label="Net savings"
-                value={formatCurrency(summary.actualSavings)}
+                label="Money in"
+                icon={
+                  <IconTile className="bg-success/12 text-success">
+                    <ArrowDownLeft />
+                  </IconTile>
+                }
+                value={formatCurrency(summary.totalIncome)}
+                className="shadow-none"
+              />
+              <Stat
+                label="Spent"
+                icon={
+                  <IconTile className="bg-primary/10 text-primary">
+                    <ArrowUpRight />
+                  </IconTile>
+                }
+                value={formatCurrency(summary.totalExpenses)}
+                className="shadow-none"
+              />
+              <Stat
+                label="Saved"
+                icon={
+                  <IconTile
+                    className={
+                      summary.actualSavings < 0 ? 'bg-destructive/10 text-destructive' : 'bg-info/12 text-info'
+                    }
+                  >
+                    <PiggyBank />
+                  </IconTile>
+                }
+                value={
+                  <span className={cn(summary.actualSavings < 0 && 'text-destructive')}>
+                    {formatCurrency(summary.actualSavings)}
+                  </span>
+                }
                 hint={
                   savingsRate === null
-                    ? 'No income recorded'
+                    ? 'No money in recorded'
                     : summary.actualSavings < 0
-                      ? 'Spent more than earned'
-                      : `${savingsRate.toFixed(0)}% of income kept`
+                      ? 'You spent more than came in'
+                      : `You kept ${savingsRate.toFixed(0)}% of what came in`
                 }
                 className="shadow-none"
               />
               {overallBudget > 0 ? (
                 <Stat
                   label="Budget used"
-                  value={
-                    <span className={cn(summary.budgetUtilization >= 100 && 'text-destructive')}>
-                      {summary.budgetUtilization.toFixed(0)}%
-                    </span>
+                  icon={
+                    <IconTile className={TONE_TILE[tone]}>
+                      <Gauge />
+                    </IconTile>
                   }
-                  hint={<span className="tabular">of {formatCurrency(overallBudget)} overall budget</span>}
+                  value={<span className={TONE_TEXT[tone]}>{summary.budgetUtilization.toFixed(0)}%</span>}
+                  hint={<span className="tabular">of your {formatCurrency(overallBudget)} budget</span>}
                   className="shadow-none"
                 >
-                  <Progress
-                    value={summary.budgetUtilization}
-                    tone={summary.budgetUtilization >= 100 ? 'danger' : 'default'}
-                    className={PRINT_EXACT}
-                  />
+                  <Progress value={summary.budgetUtilization} tone={tone} className={PRINT_EXACT} />
                 </Stat>
               ) : (
                 <Stat
                   label="Budget used"
+                  icon={
+                    <IconTile className="bg-muted text-muted-foreground">
+                      <Gauge />
+                    </IconTile>
+                  }
                   value={<span className="text-muted-foreground">—</span>}
-                  hint="No overall budget set"
+                  hint="You haven't set a budget yet"
                   className="shadow-none"
                 />
               )}
@@ -288,7 +359,10 @@ export default function ReportsPage() {
           </Section>
 
           {/* Categories */}
-          <Section title="Spending by category" meta={hasExpenses ? `${categories.length} categories` : undefined}>
+          <Section
+            title="Where your money went"
+            meta={hasExpenses ? `${categories.length} ${categories.length === 1 ? 'category' : 'categories'}` : undefined}
+          >
             {categories.length === 0 ? (
               <EmptyNote>No expenses in this period.</EmptyNote>
             ) : (
@@ -298,37 +372,48 @@ export default function ReportsPage() {
                     <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
                       <th className="px-4 py-2.5 font-medium">Category</th>
                       <th className="hidden px-4 py-2.5 text-right font-medium sm:table-cell print:table-cell">
-                        Count
+                        Entries
                       </th>
                       <th className="px-4 py-2.5 text-right font-medium">Amount</th>
                       <th className="w-[28%] px-4 py-2.5 text-right font-medium">Share</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {categories.map((c) => (
-                      <tr key={c.categoryId} className="break-inside-avoid transition-colors hover:bg-accent/50">
-                        <td className="break-words px-4 py-3 text-foreground">{c.categoryName}</td>
-                        <td className="tabular hidden px-4 py-3 text-right text-muted-foreground sm:table-cell print:table-cell">
-                          {c.transactionCount}
-                        </td>
-                        <td className="tabular whitespace-nowrap px-4 py-3 text-right font-medium">
-                          {formatCurrency(c.amount)}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center justify-end gap-3">
-                            <div className="hidden h-1 flex-1 overflow-hidden rounded-full bg-muted sm:block print:block">
-                              <div
-                                className={cn('h-full rounded-full bg-foreground/80', PRINT_EXACT)}
-                                style={{ width: `${Math.max(2, Math.min(100, c.percentage))}%` }}
+                    {categories.map((c) => {
+                      const color = expenseKindColor(c.categoryId, c.categoryName);
+                      return (
+                        <tr key={c.categoryId} className="break-inside-avoid transition-colors hover:bg-accent/50">
+                          <td className="px-4 py-3 text-foreground">
+                            <span className="flex items-center gap-2.5">
+                              <span
+                                className={cn('size-2.5 shrink-0 rounded-full', PRINT_EXACT)}
+                                style={{ background: color }}
                               />
-                            </div>
-                            <span className="tabular w-12 text-right text-xs text-muted-foreground">
-                              {c.percentage.toFixed(1)}%
+                              <span className="break-words">{c.categoryName}</span>
                             </span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td className="tabular hidden px-4 py-3 text-right text-muted-foreground sm:table-cell print:table-cell">
+                            {c.transactionCount}
+                          </td>
+                          <td className="tabular whitespace-nowrap px-4 py-3 text-right font-medium">
+                            {formatCurrency(c.amount)}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center justify-end gap-3">
+                              <div className="hidden h-1.5 flex-1 overflow-hidden rounded-full bg-muted sm:block print:block">
+                                <div
+                                  className={cn('h-full rounded-full', PRINT_EXACT)}
+                                  style={{ width: `${Math.max(2, Math.min(100, c.percentage))}%`, background: color }}
+                                />
+                              </div>
+                              <span className="tabular w-12 text-right text-xs text-muted-foreground">
+                                {c.percentage.toFixed(1)}%
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                   <tfoot>
                     <tr className="border-t border-border text-sm">
@@ -349,15 +434,15 @@ export default function ReportsPage() {
 
           <div className="grid gap-10 md:grid-cols-2 print:grid-cols-2 print:gap-8">
             {/* Essentiality */}
-            <Section title="Essentiality">
+            <Section title="Type of spending">
               {!hasExpenses ? (
-                <EmptyNote>No expenses to classify.</EmptyNote>
+                <EmptyNote>No spending to sort yet.</EmptyNote>
               ) : (
                 <div className="space-y-4">
                   <div
-                    className={cn('flex h-2 w-full gap-0.5 overflow-hidden rounded-full', PRINT_EXACT)}
+                    className={cn('flex h-2.5 w-full gap-0.5 overflow-hidden rounded-full', PRINT_EXACT)}
                     role="img"
-                    aria-label="Spending by essentiality"
+                    aria-label={essentialityRows.map((r) => `${r.label} ${r.pct.toFixed(0)}%`).join(', ')}
                   >
                     {essentialityRows
                       .filter((r) => r.pct > 0)
@@ -368,14 +453,17 @@ export default function ReportsPage() {
                   <ul className="divide-y divide-border">
                     {essentialityRows.map((r) => (
                       <li key={r.label} className="flex items-center justify-between gap-3 py-2.5 text-sm">
-                        <span className="inline-flex items-center gap-2 text-foreground">
+                        <span className="flex min-w-0 items-center gap-2.5">
                           <span
-                            className={cn('size-2 rounded-[3px]', PRINT_EXACT)}
+                            className={cn('size-2.5 shrink-0 rounded-full', PRINT_EXACT)}
                             style={{ background: r.color }}
                           />
-                          {r.label}
+                          <span className="min-w-0">
+                            <span className="block text-foreground">{r.label}</span>
+                            <span className="block truncate text-xs text-muted-foreground">{r.hint}</span>
+                          </span>
                         </span>
-                        <span className="flex items-baseline gap-2">
+                        <span className="flex shrink-0 items-baseline gap-2">
                           <span className="tabular font-medium">{formatCurrency(r.amount)}</span>
                           <span className="tabular w-9 text-right text-xs text-muted-foreground">
                             {r.pct.toFixed(0)}%
@@ -389,15 +477,26 @@ export default function ReportsPage() {
             </Section>
 
             {/* Biggest expenses */}
-            <Section title="Largest expenses">
+            <Section title="Biggest expenses">
               {biggestExpenses.length === 0 ? (
                 <EmptyNote>No expenses in this period.</EmptyNote>
               ) : (
                 <ol className="divide-y divide-border">
                   {biggestExpenses.map((tx, i) => (
                     <li key={tx.id} className="flex items-center justify-between gap-4 py-2.5 break-inside-avoid">
-                      <div className="flex min-w-0 items-baseline gap-3">
-                        <span className="tabular w-4 shrink-0 text-xs text-subtle">{i + 1}</span>
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span
+                          className={cn(
+                            'tabular flex size-6 shrink-0 items-center justify-center rounded-full text-[11px] font-medium',
+                            PRINT_EXACT
+                          )}
+                          style={{
+                            background: `${PURCHASE_KINDS[kindForTransaction(tx)].color}1f`,
+                            color: PURCHASE_KINDS[kindForTransaction(tx)].color,
+                          }}
+                        >
+                          {i + 1}
+                        </span>
                         <div className="min-w-0">
                           <div className="truncate text-sm text-foreground">{tx.description}</div>
                           <div className="truncate text-xs text-muted-foreground">
@@ -414,27 +513,45 @@ export default function ReportsPage() {
           </div>
 
           {/* Potential savings */}
-          <Section title="Potential savings">
+          <Section title="Ways to save">
             <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm leading-relaxed text-muted-foreground break-inside-avoid">
               {!hasExpenses ? (
-                <p>Nothing to optimise yet. Add expenses in this period to see where you could save.</p>
+                <p>Nothing to look at yet. Add some expenses in this period to see where you could save.</p>
               ) : (
                 <div className="space-y-2">
                   <p>
-                    Net savings for this period are{' '}
-                    <span className="tabular font-medium text-foreground">{formatCurrency(summary.actualSavings)}</span>.
+                    {summary.actualSavings >= 0 ? (
+                      <>
+                        You saved{' '}
+                        <span className="tabular font-medium text-success">
+                          {formatCurrency(summary.actualSavings)}
+                        </span>{' '}
+                        in this period.
+                      </>
+                    ) : (
+                      <>
+                        You spent{' '}
+                        <span className="tabular font-medium text-destructive">
+                          {formatCurrency(-summary.actualSavings)}
+                        </span>{' '}
+                        more than came in during this period.
+                      </>
+                    )}
                     {categories[0] && (
                       <>
                         {' '}
-                        The largest category was <span className="text-foreground">{categories[0].categoryName}</span> at{' '}
-                        <span className="tabular">{categories[0].percentage.toFixed(0)}%</span> of spending.
+                        Your biggest category was{' '}
+                        <span className="font-medium text-foreground">{categories[0].categoryName}</span>, at{' '}
+                        <span className="tabular">{categories[0].percentage.toFixed(0)}%</span> of your spending.
                       </>
                     )}
                   </p>
                   <p>
-                    Trimming optimizable spending by {potentialSavings.optimizableReductionPct}% and discretionary
-                    spending by {potentialSavings.discretionaryReductionPct}% would have saved{' '}
-                    <span className="tabular font-medium text-foreground">
+                    Cutting <span className="font-medium text-trim">could trim</span> spending by{' '}
+                    {potentialSavings.optimizableReductionPct}% and{' '}
+                    <span className="font-medium text-optional">optional</span> spending by{' '}
+                    {potentialSavings.discretionaryReductionPct}% would have saved{' '}
+                    <span className="tabular font-medium text-success">
                       {formatCurrency(potentialSavings.monthlyPotentialSavings)}
                     </span>{' '}
                     over this period
@@ -442,7 +559,7 @@ export default function ReportsPage() {
                       <>
                         {' '}
                         — about{' '}
-                        <span className="tabular font-medium text-foreground">
+                        <span className="tabular font-medium text-success">
                           {formatCurrency(potentialSavings.annualPotentialSavings)}
                         </span>{' '}
                         a year
@@ -472,6 +589,12 @@ function Section({ title, meta, children }: { title: string; meta?: string; chil
   );
 }
 
+function IconTile({ className, children }: { className?: string; children: React.ReactNode }) {
+  return (
+    <span className={cn('flex size-8 items-center justify-center rounded-lg', PRINT_EXACT, className)}>{children}</span>
+  );
+}
+
 function EmptyNote({ children }: { children: React.ReactNode }) {
   return (
     <div className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-[13px] text-muted-foreground">
@@ -488,7 +611,7 @@ function ReportsSkeleton() {
           <Skeleton className="h-7 w-28" />
           <Skeleton className="h-4 w-64" />
         </div>
-        <Skeleton className="h-8 w-96 max-w-full" />
+        <Skeleton className="h-10 w-[30rem] max-w-full" />
       </div>
       <div className="rounded-xl border border-border bg-card">
         <div className="space-y-2 border-b border-border p-5 md:p-8">

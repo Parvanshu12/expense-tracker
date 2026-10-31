@@ -1,7 +1,24 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Trash2, Wallet } from 'lucide-react';
+import {
+  Plus,
+  Trash2,
+  Wallet,
+  Utensils,
+  ShoppingBasket,
+  Car,
+  House,
+  HeartPulse,
+  ShoppingBag,
+  Ticket,
+  Repeat,
+  GraduationCap,
+  Landmark,
+  Tag,
+  Banknote,
+  type LucideIcon,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -22,14 +39,56 @@ import {
   toLocalDateString,
   type BudgetStatus,
 } from '@/lib/calculations/finance';
+import { PURCHASE_KINDS, kindForCategory, type PurchaseKind } from '@/lib/categories/kinds';
 import { toast } from 'sonner';
 
-const STATUS_BADGES: Record<BudgetStatus, { text: string; variant: 'outline' | 'warning' | 'destructive' }> = {
-  on_track: { text: 'On track', variant: 'outline' },
-  warning: { text: 'Approaching limit', variant: 'warning' },
-  critical: { text: 'Critical', variant: 'destructive' },
-  over_budget: { text: 'Over budget', variant: 'destructive' },
+type StatusTone = 'success' | 'warning' | 'danger';
+
+const STATUS_BADGES: Record<
+  BudgetStatus,
+  { text: string; variant: 'success' | 'warning' | 'destructive'; tone: StatusTone }
+> = {
+  on_track: { text: 'On track', variant: 'success', tone: 'success' },
+  warning: { text: 'Getting close', variant: 'warning', tone: 'warning' },
+  critical: { text: 'Almost at limit', variant: 'destructive', tone: 'danger' },
+  over_budget: { text: 'Over budget', variant: 'destructive', tone: 'danger' },
 };
+
+const KIND_ICONS: Record<PurchaseKind, LucideIcon> = {
+  food: Utensils,
+  groceries: ShoppingBasket,
+  transport: Car,
+  home: House,
+  health: HeartPulse,
+  shopping: ShoppingBag,
+  fun: Ticket,
+  subscriptions: Repeat,
+  learning: GraduationCap,
+  money: Landmark,
+  other: Tag,
+  income: Banknote,
+};
+
+/** Small coloured icon tile: kind colour for a category, primary for the overall budget. */
+function BudgetIcon({ kind }: { kind: PurchaseKind | null }) {
+  if (!kind) {
+    return (
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary [&_svg]:size-4">
+        <Wallet aria-hidden />
+      </div>
+    );
+  }
+  const { color } = PURCHASE_KINDS[kind];
+  const Icon = KIND_ICONS[kind];
+  return (
+    <div
+      className="flex size-9 shrink-0 items-center justify-center rounded-lg [&_svg]:size-4"
+      style={{ background: color + '1f', color }}
+    >
+      <Icon aria-hidden />
+    </div>
+  );
+}
 
 const PERIOD_LABELS: Record<PeriodType, string> = {
   weekly: 'This week',
@@ -92,10 +151,13 @@ export default function BudgetsPage() {
 
       const statusBadge = STATUS_BADGES[getBudgetStatus(utilization)];
 
+      const category = b.category_id === null ? undefined : categories.find((c) => c.id === b.category_id);
       const categoryName =
+        b.category_id === null ? 'All spending' : category?.name || 'Category budget';
+      const kind: PurchaseKind | null =
         b.category_id === null
-          ? 'Overall spending'
-          : categories.find((c) => c.id === b.category_id)?.name || 'Category budget';
+          ? null
+          : kindForCategory(category ?? { id: b.category_id, name: '', category_type: 'expense' });
 
       return {
         ...b,
@@ -106,6 +168,7 @@ export default function BudgetsPage() {
         isOver,
         statusBadge,
         categoryName,
+        kind,
       };
     });
   }, [budgets, transactions, categories, today]);
@@ -114,7 +177,7 @@ export default function BudgetsPage() {
     e.preventDefault();
     const amt = parseFloat(budgetAmount);
     if (isNaN(amt) || amt <= 0) {
-      toast.error('Please enter a valid positive budget amount.');
+      toast.error('Please enter an amount above zero.');
       return;
     }
 
@@ -132,12 +195,12 @@ export default function BudgetsPage() {
       });
 
       setBudgets((prev) => [created, ...prev]);
-      toast.success('Budget created');
+      toast.success('Budget added');
       setIsModalOpen(false);
       setBudgetAmount('');
       setSelectedCategory('overall');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to create budget');
+      toast.error(err instanceof Error ? err.message : 'Could not add the budget');
     } finally {
       setSaving(false);
     }
@@ -150,7 +213,7 @@ export default function BudgetsPage() {
       setBudgets((prev) => prev.filter((b) => b.id !== id));
       toast.success('Budget removed');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to delete budget');
+      toast.error(err instanceof Error ? err.message : 'Could not remove the budget');
     } finally {
       setDeleting(false);
       setDeletingId(null);
@@ -200,7 +263,7 @@ export default function BudgetsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Budgets"
-        description="Spending limits with alerts at 75%, 90% and 100%."
+        description="Set a limit for the month and see how much you have left."
         actions={newBudgetButton}
       />
 
@@ -208,7 +271,7 @@ export default function BudgetsPage() {
         <EmptyState
           icon={<Wallet />}
           title="No budgets yet"
-          description="Set a monthly limit for one category or for all of your spending."
+          description="A budget is a spending limit for the month. Start with one for all your spending, or pick a category like food."
           action={newBudgetButton}
         />
       ) : (
@@ -220,15 +283,18 @@ export default function BudgetsPage() {
               style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
             >
               <CardHeader className="flex-row items-start justify-between gap-3 pb-4">
-                <div className="min-w-0 space-y-1">
-                  <CardTitle className="truncate">{item.categoryName}</CardTitle>
-                  <CardDescription>{PERIOD_LABELS[item.period_type] ?? item.period_type}</CardDescription>
+                <div className="flex min-w-0 items-center gap-3">
+                  <BudgetIcon kind={item.kind} />
+                  <div className="min-w-0 space-y-0.5">
+                    <CardTitle className="truncate">{item.categoryName}</CardTitle>
+                    <CardDescription>{PERIOD_LABELS[item.period_type] ?? item.period_type}</CardDescription>
+                  </div>
                 </div>
                 <div className="-mr-2 -mt-1 flex shrink-0 items-center gap-1">
                   <Badge variant={item.statusBadge.variant}>{item.statusBadge.text}</Badge>
                   <Button
                     variant="ghost"
-                    size="icon-sm"
+                    size="icon"
                     onClick={() => setDeletingId(item.id)}
                     aria-label={`Delete ${item.categoryName} budget`}
                     title="Delete budget"
@@ -244,19 +310,31 @@ export default function BudgetsPage() {
                   <span className="tabular text-2xl font-semibold tracking-[-0.02em] text-foreground">
                     {formatCurrency(item.spent)}
                   </span>
-                  <span className="tabular text-sm text-muted-foreground">of {formatCurrency(item.total)}</span>
+                  <span className="tabular text-sm text-muted-foreground">
+                    spent of {formatCurrency(item.total)}
+                  </span>
                 </div>
 
-                <Progress value={item.utilization} tone={item.isOver ? 'danger' : 'default'} />
+                <Progress value={item.utilization} tone={item.statusBadge.tone} className="h-2" />
 
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span className="tabular">{item.utilization.toFixed(0)}% used</span>
+                <div className="flex items-center justify-between gap-3 text-[13px]">
+                  <span className="tabular text-muted-foreground">{item.utilization.toFixed(0)}% used</span>
                   {item.isOver ? (
                     <span className="tabular font-medium text-destructive">
                       {formatCurrency(item.spent - item.total)} over
                     </span>
                   ) : (
-                    <span className="tabular">{formatCurrency(item.remaining)} left</span>
+                    <span
+                      className={
+                        item.statusBadge.tone === 'success'
+                          ? 'tabular font-medium text-success'
+                          : item.statusBadge.tone === 'warning'
+                            ? 'tabular font-medium text-warning'
+                            : 'tabular font-medium text-destructive'
+                      }
+                    >
+                      {formatCurrency(item.remaining)} left
+                    </span>
                   )}
                 </div>
               </CardContent>
@@ -270,26 +348,26 @@ export default function BudgetsPage() {
         open={isModalOpen}
         onClose={closeCreate}
         title="New budget"
-        description="You'll get alerts as spending crosses 75%, 90% and 100% of the limit."
+        description="Pick what the limit is for and how much you want to spend in a month. We'll let you know when you're getting close."
         footer={
           <>
             <Button variant="outline" type="button" onClick={closeCreate}>
               Cancel
             </Button>
             <Button type="submit" form="create-budget-form" loading={saving}>
-              Create budget
+              Add budget
             </Button>
           </>
         }
       >
         <form id="create-budget-form" onSubmit={handleCreateBudget} className="space-y-4">
-          <Field label="Category" htmlFor="budget-category">
+          <Field label="What is it for?" htmlFor="budget-category">
             <Select
               id="budget-category"
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
             >
-              <option value="overall">Overall (all categories)</option>
+              <option value="overall">All spending</option>
               {categories
                 .filter((c) => c.category_type === 'expense')
                 .map((cat) => (
@@ -300,7 +378,7 @@ export default function BudgetsPage() {
             </Select>
           </Field>
 
-          <Field label="Monthly limit (₹)" htmlFor="budget-amount">
+          <Field label="Limit per month (₹)" htmlFor="budget-amount">
             <Input
               id="budget-amount"
               type="number"
@@ -321,11 +399,11 @@ export default function BudgetsPage() {
       <Dialog
         open={!!deletingId}
         onClose={closeDelete}
-        title="Delete budget?"
+        title="Remove this budget?"
         description={
           deletingBudget
-            ? `The ${deletingBudget.categoryName.toLowerCase()} budget will be removed. Your transactions are not affected.`
-            : 'This budget will be removed. Your transactions are not affected.'
+            ? `The ${deletingBudget.categoryName.toLowerCase()} budget will be removed. Your saved expenses stay as they are.`
+            : 'This budget will be removed. Your saved expenses stay as they are.'
         }
         footer={
           <>
@@ -337,7 +415,7 @@ export default function BudgetsPage() {
               loading={deleting}
               onClick={() => deletingId && handleDeleteBudget(deletingId)}
             >
-              Delete
+              Remove
             </Button>
           </>
         }

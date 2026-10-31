@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Target, Trash2 } from 'lucide-react';
+import { CircleCheck, PiggyBank, Plus, Target, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -74,12 +74,12 @@ export default function SavingsGoalsPage() {
     const current = currentAmount ? parseFloat(currentAmount) : 0;
 
     if (isNaN(target) || target <= 0) {
-      toast.error('Please enter a valid target amount.');
+      toast.error('Please enter how much you want to save.');
       return;
     }
 
     if (!targetDate) {
-      toast.error('Please select a target completion date.');
+      toast.error('Please pick the date you want to reach it by.');
       return;
     }
 
@@ -95,7 +95,7 @@ export default function SavingsGoalsPage() {
       });
 
       setGoals((prev) => [created, ...prev]);
-      toast.success('Goal created');
+      toast.success('Goal added');
       setIsModalOpen(false);
       setName('');
       setTargetAmount('');
@@ -103,7 +103,7 @@ export default function SavingsGoalsPage() {
       setTargetDate('');
       setDescription('');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to create savings goal');
+      toast.error(err instanceof Error ? err.message : 'Could not add the goal');
     } finally {
       setSaving(false);
     }
@@ -116,7 +116,7 @@ export default function SavingsGoalsPage() {
       setGoals((prev) => prev.filter((g) => g.id !== id));
       toast.success('Goal removed');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to delete goal');
+      toast.error(err instanceof Error ? err.message : 'Could not remove the goal');
     } finally {
       setDeleting(false);
       setDeletingId(null);
@@ -128,7 +128,7 @@ export default function SavingsGoalsPage() {
     if (!selectedGoal) return;
     const added = parseFloat(depositAmount);
     if (isNaN(added) || added <= 0) {
-      toast.error('Please enter a valid contribution amount.');
+      toast.error('Please enter an amount above zero.');
       return;
     }
 
@@ -139,7 +139,7 @@ export default function SavingsGoalsPage() {
       setGoals((prev) => prev.map((g) => (g.id === selectedGoal.id ? { ...g, current_amount: newAmount } : g)));
       toast.success(`Added ${formatCurrency(added)} to ${selectedGoal.name}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update goal');
+      toast.error(err instanceof Error ? err.message : 'Could not add the money');
     } finally {
       setDepositing(false);
     }
@@ -172,7 +172,7 @@ export default function SavingsGoalsPage() {
                 <Skeleton className="h-3 w-20" />
               </div>
               <Skeleton className="h-9 w-20" />
-              <Skeleton className="h-1 w-full rounded-full" />
+              <Skeleton className="h-2 w-full rounded-full" />
               <div className="grid grid-cols-2 gap-3">
                 <Skeleton className="h-8" />
                 <Skeleton className="h-8" />
@@ -190,16 +190,16 @@ export default function SavingsGoalsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Goals"
-        description="Savings targets with a suggested monthly amount to reach each one on time."
+        title="Savings goals"
+        description="Something you're saving for, and how much to put aside each month to get there."
         actions={newGoalButton}
       />
 
       {goals.length === 0 ? (
         <EmptyState
-          icon={<Target />}
-          title="No goals yet"
-          description="Add a target, like an emergency fund or a trip, and track progress toward it."
+          icon={<PiggyBank />}
+          title="No savings goals yet"
+          description="Add something you're saving for, like a holiday, a new phone or a rainy-day fund. We'll show how much to save each month."
           action={newGoalButton}
         />
       ) : (
@@ -222,18 +222,29 @@ export default function SavingsGoalsPage() {
                 style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
               >
                 <CardHeader className="flex-row items-start justify-between gap-3 pb-4">
-                  <div className="min-w-0 space-y-1">
-                    <CardTitle className="truncate">{goal.name}</CardTitle>
-                    <CardDescription className="tabular">By {formatDate(goal.target_date)}</CardDescription>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div
+                      className={
+                        reached
+                          ? 'flex size-9 shrink-0 items-center justify-center rounded-lg bg-success/12 text-success [&_svg]:size-4'
+                          : 'flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary [&_svg]:size-4'
+                      }
+                    >
+                      {reached ? <CircleCheck aria-hidden /> : <Target aria-hidden />}
+                    </div>
+                    <div className="min-w-0 space-y-0.5">
+                      <CardTitle className="truncate">{goal.name}</CardTitle>
+                      <CardDescription className="tabular">By {formatDate(goal.target_date)}</CardDescription>
+                    </div>
                   </div>
                   <div className="-mr-2 -mt-1 flex shrink-0 items-center gap-1">
-                    {reached && <Badge variant="outline">Reached</Badge>}
+                    {reached && <Badge variant="success">Reached</Badge>}
                     <Button
                       variant="ghost"
-                      size="icon-sm"
+                      size="icon"
                       onClick={() => setDeletingId(goal.id)}
                       aria-label={`Delete ${goal.name}`}
-                      title="Delete goal"
+                      title="Remove goal"
                       className="hover:text-destructive"
                     >
                       <Trash2 />
@@ -246,39 +257,39 @@ export default function SavingsGoalsPage() {
                     <p className="line-clamp-2 text-[13px] text-muted-foreground">{goal.description}</p>
                   )}
 
-                  <div className="mt-auto space-y-2">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="tabular text-3xl font-semibold tracking-[-0.03em] text-foreground">
-                        {progress}%
+                  <div className="mt-auto space-y-2.5">
+                    <div className="flex flex-wrap items-baseline gap-x-1.5">
+                      <span className="tabular text-2xl font-semibold tracking-[-0.02em] text-foreground">
+                        {formatCurrency(current)}
                       </span>
-                      <span className="tabular truncate text-xs text-muted-foreground">
-                        {formatCurrency(current)} of {formatCurrency(target)}
-                      </span>
+                      <span className="tabular text-sm text-muted-foreground">saved of {formatCurrency(target)}</span>
                     </div>
-                    <Progress value={progress} className="h-1" />
+                    <Progress value={progress} tone={reached ? 'success' : 'default'} className="h-2" />
+                    <div className="flex items-center justify-between gap-3 text-[13px]">
+                      <span className={reached ? 'tabular font-medium text-success' : 'tabular font-medium text-primary'}>
+                        {progress}% there
+                      </span>
+                      {!reached && (
+                        <span className="tabular text-muted-foreground">{formatCurrency(remaining)} to go</span>
+                      )}
+                    </div>
                   </div>
 
-                  <dl className="grid grid-cols-2 gap-3 border-t border-border pt-4">
-                    <div className="space-y-0.5">
-                      <dt className="text-xs text-muted-foreground">Remaining</dt>
-                      <dd className="tabular text-sm font-medium text-foreground">{formatCurrency(remaining)}</dd>
-                    </div>
-                    <div className="space-y-0.5">
-                      <dt
-                        className="text-xs text-muted-foreground"
-                        title="Remaining amount divided by the months left until the target date"
-                      >
-                        Suggested monthly
-                      </dt>
-                      <dd className="tabular text-sm font-medium text-foreground">
-                        {reached ? '—' : `${formatCurrency(suggestedMonthly)}/mo`}
-                      </dd>
-                    </div>
-                  </dl>
+                  <p className="border-t border-border pt-4 text-[13px] text-muted-foreground">
+                    {reached ? (
+                      <span className="font-medium text-success">You did it. This goal is fully saved.</span>
+                    ) : (
+                      <>
+                        Save about{' '}
+                        <span className="tabular font-medium text-foreground">{formatCurrency(suggestedMonthly)}</span>{' '}
+                        a month to get there
+                      </>
+                    )}
+                  </p>
                 </CardContent>
 
                 <CardFooter>
-                  <Button variant="outline" size="sm" className="w-full" onClick={() => setSelectedGoal(goal)}>
+                  <Button variant="outline" className="w-full" onClick={() => setSelectedGoal(goal)}>
                     <Plus />
                     Add money
                   </Button>
@@ -296,9 +307,9 @@ export default function SavingsGoalsPage() {
         title="Add money"
         description={
           selectedGoal
-            ? `${selectedGoal.name}: ${formatCurrency(Number(selectedGoal.current_amount))} of ${formatCurrency(
+            ? `${selectedGoal.name}: you've saved ${formatCurrency(Number(selectedGoal.current_amount))} of ${formatCurrency(
                 Number(selectedGoal.target_amount)
-              )} saved.`
+              )} so far.`
             : undefined
         }
         className="max-w-sm"
@@ -314,7 +325,7 @@ export default function SavingsGoalsPage() {
         }
       >
         <form id="add-money-form" onSubmit={handleAddContribution}>
-          <Field label="Amount (₹)" htmlFor="deposit-amount">
+          <Field label="How much are you adding? (₹)" htmlFor="deposit-amount">
             <Input
               id="deposit-amount"
               type="number"
@@ -336,21 +347,21 @@ export default function SavingsGoalsPage() {
       <Dialog
         open={isModalOpen}
         onClose={closeCreate}
-        title="New goal"
-        description="We'll work out how much to set aside each month."
+        title="New savings goal"
+        description="Tell us what you're saving for and by when. We'll work out how much to put aside each month."
         footer={
           <>
             <Button variant="outline" type="button" onClick={closeCreate}>
               Cancel
             </Button>
             <Button type="submit" form="create-goal-form" loading={saving}>
-              Create goal
+              Add goal
             </Button>
           </>
         }
       >
         <form id="create-goal-form" onSubmit={handleCreateGoal} className="space-y-4">
-          <Field label="Name" htmlFor="goal-name">
+          <Field label="What are you saving for?" htmlFor="goal-name">
             <Input
               id="goal-name"
               type="text"
@@ -362,7 +373,7 @@ export default function SavingsGoalsPage() {
           </Field>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Target (₹)" htmlFor="goal-target">
+            <Field label="Amount needed (₹)" htmlFor="goal-target">
               <Input
                 id="goal-target"
                 type="number"
@@ -391,7 +402,7 @@ export default function SavingsGoalsPage() {
             </Field>
           </div>
 
-          <Field label="Target date" htmlFor="goal-date">
+          <Field label="Reach it by" htmlFor="goal-date">
             <Input
               id="goal-date"
               type="date"
@@ -418,10 +429,10 @@ export default function SavingsGoalsPage() {
       <Dialog
         open={!!deletingId}
         onClose={closeDelete}
-        title="Delete goal?"
+        title="Remove this goal?"
         description={
           deletingGoal
-            ? `"${deletingGoal.name}" and its saved progress will be removed. This can't be undone.`
+            ? `"${deletingGoal.name}" and its progress will be removed. This can't be undone.`
             : "This goal will be removed. This can't be undone."
         }
         footer={
@@ -434,7 +445,7 @@ export default function SavingsGoalsPage() {
               loading={deleting}
               onClick={() => deletingId && handleDeleteGoal(deletingId)}
             >
-              Delete
+              Remove
             </Button>
           </>
         }

@@ -12,8 +12,11 @@ import {
   getReportingPeriodRange,
   filterTransactionsByDateRange,
   toLocalDateString,
+  spendingWarnings,
 } from '../src/lib/calculations/finance.ts';
-import { extractAmount, parseExpenseHeuristically } from '../src/lib/ai/heuristic-parser.ts';
+import { extractAmount, parseExpenseHeuristically, parseExpensesHeuristically } from '../src/lib/ai/heuristic-parser.ts';
+import { kindForCategory, kindForTransaction } from '../src/lib/categories/kinds.ts';
+import { findDuplicates } from '../src/lib/ai/dedupe.ts';
 
 describe('SpendWise AI Calculation Engine Tests', () => {
   it('correctly calculates income, expenses, remaining balance, and actual savings', () => {
@@ -132,6 +135,82 @@ describe('SpendWise AI Calculation Engine Tests', () => {
     const missing = parseExpenseHeuristically('bought a keyboard on amazon', '2026-11-01');
     assert.equal(missing.amount, null);
     assert.equal(missing.needs_clarification, true);
+  });
+
+  it('splits a note listing several purchases into separate entries offline', () => {
+    const items = parseExpensesHeuristically('aaj 450 ka lunch swiggy se, 1200 ka petrol aur 2 kg sabzi 180 cash me', '2026-11-01');
+    assert.deepEqual(
+      items.map((i) => [i.amount, i.category]),
+      [
+        [450, 'Food & Dining'],
+        [1200, 'Transportation'],
+        [180, 'Groceries'],
+      ]
+    );
+    // Quantities are not amounts.
+    assert.equal(extractAmount('dinner for 4 people 2000'), 2000);
+    // An item without an amount is kept so the chat can ask for it.
+    const [shoes, netflix] = parseExpensesHeuristically('bought shoes and paid 649 for netflix', '2026-11-01');
+    assert.equal(shoes.amount, null);
+    assert.equal(shoes.needs_clarification, true);
+    assert.equal(netflix.amount, 649);
+  });
+
+  it('maps categories to coloured purchase kinds', () => {
+    assert.equal(kindForCategory({ id: 'cat-subs', name: 'Subscriptions', category_type: 'expense' }), 'subscriptions');
+    assert.equal(kindForCategory({ id: 'custom-1', name: 'Petrol & cabs', category_type: 'expense' }), 'transport');
+    assert.equal(kindForCategory({ id: 'custom-2', name: 'Side hustle', category_type: 'income' }), 'income');
+    assert.equal(kindForTransaction({ transaction_type: 'expense', category_id: 'cat-housing' }), 'home');
+  });
+
+  it('skips statement rows that were already recorded in chat', () => {
+    const existing = [
+      { id: 'sofa', transaction_type: 'expense', amount: 45000, purchase_date: '2026-10-17', description: 'Sofa', category_id: 'cat-shopping' },
+      { id: 'chai', transaction_type: 'expense', amount: 40, purchase_date: '2026-10-20', description: 'Chai', category_id: 'cat-food' },
+      { id: 'petrol', transaction_type: 'expense', amount: 1200, purchase_date: '2026-10-29', description: 'Petrol', category_id: 'cat-transport' },
+      { id: 'rahul', transaction_type: 'expense', amount: 500, purchase_date: '2026-10-12', description: 'Payment to Rahul', category_id: 'cat-gifts' },
+    ];
+    const statement = [
+      // Different words, same category: the sofa told in chat.
+      { transaction_type: 'expense', amount: 45000, purchase_date: '2026-10-18', description: 'Urban Ladder purchase', category_id: 'cat-shopping' },
+      { transaction_type: 'expense', amount: 40, purchase_date: '2026-10-20', description: 'UPI chai', category_id: 'cat-food' },
+      { transaction_type: 'expense', amount: 40, purchase_date: '2026-10-20', description: 'UPI chai', category_id: 'cat-food' },
+      { transaction_type: 'expense', amount: 45000, purchase_date: '2026-10-25', description: 'Too late to match', category_id: 'cat-shopping' },
+      { transaction_type: 'income', amount: 40, purchase_date: '2026-10-20', description: 'Refund' },
+      // Same amount and week as the petrol, but a transfer to a person: not a duplicate.
+      { transaction_type: 'expense', amount: 1200, purchase_date: '2026-10-30', description: 'UPI to Priya Sharma', category_id: 'cat-gifts', needs: 'category' },
+      // Category unknown, but the name matches what was said in chat.
+      { transaction_type: 'expense', amount: 500, purchase_date: '2026-10-12', description: 'UPI to Rahul Kumar', category_id: 'cat-misc', needs: 'category' },
+    ];
+    const { fresh, duplicates } = findDuplicates(statement, existing);
+    assert.deepEqual(duplicates.map((d) => d.match.id), ['sofa', 'chai', 'rahul']);
+    assert.deepEqual(fresh.map((f) => f.description), ['UPI chai', 'Too late to match', 'Refund', 'UPI to Priya Sharma']);
+  });
+
+  it('warns about budgets, overspending, goals at risk and big purchases', () => {
+    const tx = (purchase_date, amount, extra = {}) => ({ purchase_date, amount, transaction_type: 'expense', category_id: 'cat-food', description: 'x', ...extra });
+    const transactions = [
+      tx('2026-10-01', 50000, { transaction_type: 'income', category_id: 'cat-salary' }),
+      tx('2026-10-05', 5800),
+      tx('2026-10-20', 30000, { category_id: 'cat-shopping', description: 'Sofa' }),
+    ];
+    const warnings = spendingWarnings({
+      justSaved: [transactions[2], transactions[1]],
+      transactions,
+      budgets: [{ category_id: 'cat-food', period_type: 'monthly', amount: 6000 }],
+      goals: [{ name: 'Emergency fund', target_amount: 300000, current_amount: 100000, target_date: '2027-10-31' }],
+      monthlyIncome: 50000,
+      today: '2026-10-31',
+      categoryName: () => 'Food & Dining',
+    });
+    const text = warnings.map((w) => w.text).join(' | ');
+    assert.match(text, /97% of your Food & Dining budget/);
+    assert.match(text, /Emergency fund needs/); // 14,200 left vs ~16,667 a month needed
+    assert.match(text, /"Sofa" is about 60% of your monthly income/);
+    assert.equal(warnings[0].tone, 'danger');
+
+    // Income only: nothing to warn about.
+    assert.deepEqual(spendingWarnings({ justSaved: [transactions[0]], transactions, budgets: [], goals: [], monthlyIncome: 50000, today: '2026-10-31', categoryName: () => '' }), []);
   });
 
   it('enforces category ownership isolation rule', () => {

@@ -16,70 +16,84 @@ import { Badge } from '@/components/ui/badge';
 import { Logo } from '@/components/layout/logo';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { enterSandbox } from '@/lib/auth-client';
+import { PURCHASE_KINDS, type PurchaseKind } from '@/lib/categories/kinds';
 import { cn } from '@/lib/utils';
 
-const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
+// Each feature gets a small tinted icon tile; the colour hints at what it is about.
+const FEATURES: { icon: LucideIcon; title: string; body: string; tone: string }[] = [
   {
     icon: Mic,
-    title: 'Note an expense in one sentence',
-    body: 'Type or say "paid 850 for groceries at DMart". Amount, merchant and category are filled in for you. Hinglish works too.',
+    title: 'Add an expense in a few words',
+    body: 'Type or say "850 for groceries at DMart". We fill in the amount, shop and category for you. Hinglish works too.',
+    tone: 'bg-primary/10 text-primary',
   },
   {
     icon: Scale,
-    title: 'Essential vs optional',
-    body: 'Every expense is marked essential, optimizable or discretionary, so you can see which spending you could actually change.',
+    title: 'See what you really needed',
+    body: 'Each expense is sorted as essential, could trim or optional, so you can spot where there is room to save.',
+    tone: 'bg-essential/12 text-essential',
   },
   {
     icon: Bell,
-    title: 'Budgets that warn you early',
-    body: 'Set a monthly or per-category budget. You get a heads-up at 75%, 90% and 100%, before the month gets away from you.',
+    title: 'A friendly nudge before you overspend',
+    body: 'Set a limit for the month, or for one thing like eating out. We let you know when you are getting close.',
+    tone: 'bg-warning/14 text-warning',
   },
   {
     icon: MessageSquare,
-    title: 'A money coach that knows your numbers',
-    body: 'Ask where your money went or how to save more. Answers come from your own transactions, powered by Cloudflare Workers AI.',
+    title: 'Ask questions in plain words',
+    body: 'Ask "where did my money go?" or "how can I save more?" and get answers based on your own spending.',
+    tone: 'bg-info/12 text-info',
   },
   {
     icon: Target,
-    title: 'Savings goals',
-    body: 'Pick a target and a date. See how much to set aside each month and how far along you are.',
+    title: 'Save for the things you want',
+    body: 'Pick something to save for and a date. We show how much to put aside each month and how close you are.',
+    tone: 'bg-success/12 text-success',
   },
   {
     icon: TrendingUp,
-    title: 'Wealth simulator',
-    body: 'See what the money you stop spending on optional things could grow into over 5, 10 or 20 years.',
+    title: 'Plan for later',
+    body: 'See how a small amount saved every month could grow over 5, 10 or 20 years.',
+    tone: 'bg-primary/10 text-primary',
   },
 ];
 
 const STEPS = [
   {
-    title: 'Add expenses as they happen',
-    body: 'One line of text or a quick voice note. It takes a few seconds.',
+    title: 'Add what you spend',
+    body: 'Type a short line or say it out loud. It takes a few seconds.',
   },
   {
-    title: 'Review your month',
-    body: 'See totals by category, essential vs optional, and how each budget is tracking.',
+    title: 'Look at your month',
+    body: 'See where your money went, what you needed, and how your budgets are doing.',
   },
   {
-    title: 'Adjust and save',
-    body: 'Trim what you do not need, set a goal, and watch the savings add up.',
+    title: 'Make small changes',
+    body: 'Cut back where it is easy, set a goal, and watch your savings grow.',
   },
 ];
 
-// Daily spend for the preview chart: [essential, optional] as % of the tallest day.
-const BARS: [number, number][] = [
-  [38, 12], [30, 22], [52, 8], [24, 30], [44, 16], [62, 20], [28, 10],
-  [40, 26], [34, 14], [56, 18], [26, 34], [48, 12], [36, 22], [58, 28],
+// Daily spend for the preview chart: [essential, could trim, optional] as % of the tallest day.
+const BARS: [number, number, number][] = [
+  [38, 8, 12], [30, 6, 22], [52, 10, 8], [24, 12, 30], [44, 4, 16], [62, 8, 20], [28, 14, 10],
+  [40, 6, 26], [34, 10, 14], [56, 4, 18], [26, 8, 34], [48, 12, 12], [36, 6, 22], [58, 10, 28],
 ];
 
-const TRANSACTIONS: { name: string; meta: string; amount: string; kind: 'essential' | 'optimizable' | 'discretionary' }[] = [
-  { name: 'Groceries', meta: 'DMart · Today', amount: '₹1,240', kind: 'essential' },
-  { name: 'Dinner order', meta: 'Swiggy · Yesterday', amount: '₹480', kind: 'discretionary' },
-  { name: 'Metro card', meta: 'Transport · Oct 28', amount: '₹500', kind: 'essential' },
-  { name: 'Mobile plan', meta: 'Jio · Oct 27', amount: '₹749', kind: 'optimizable' },
+const TRANSACTIONS: {
+  name: string;
+  meta: string;
+  amount: string;
+  kind: 'essential' | 'optimizable' | 'discretionary';
+  purchase: PurchaseKind;
+}[] = [
+  { name: 'Groceries', meta: 'DMart · Today', amount: '₹1,240', kind: 'essential', purchase: 'groceries' },
+  { name: 'Dinner order', meta: 'Swiggy · Yesterday', amount: '₹480', kind: 'discretionary', purchase: 'food' },
+  { name: 'Metro card', meta: 'Transport · Oct 28', amount: '₹500', kind: 'essential', purchase: 'transport' },
+  { name: 'Mobile plan', meta: 'Jio · Oct 27', amount: '₹749', kind: 'optimizable', purchase: 'subscriptions' },
 ];
 
-const KIND_LABEL = { essential: 'Essential', optimizable: 'Optimizable', discretionary: 'Optional' } as const;
+const KIND_LABEL = { essential: 'Essential', optimizable: 'Could trim', discretionary: 'Optional' } as const;
 
 function tryDemo() {
   enterSandbox();
@@ -101,17 +115,17 @@ export default function HomePage() {
           <nav className="flex items-center gap-1">
             <a
               href="#features"
-              className="hidden rounded-md px-3 py-1.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
+              className="hidden h-9 items-center rounded-md px-3 text-[13px] text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
             >
               Features
             </a>
             <Link
               href="/login"
-              className="rounded-md px-3 py-1.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
+              className="inline-flex h-9 items-center rounded-md px-3 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
             >
               Sign in
             </Link>
-            <Link href="/login" className={cn(buttonVariants({ size: 'sm' }), 'ml-1')}>
+            <Link href="/login" className={cn(buttonVariants(), 'ml-1')}>
               Get started
             </Link>
           </nav>
@@ -122,21 +136,21 @@ export default function HomePage() {
         {/* Hero */}
         <section className="mx-auto max-w-6xl px-4 pt-16 pb-12 text-center sm:px-6 sm:pt-24 sm:pb-16">
           <div className="animate-rise mx-auto inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground shadow-card">
-            <span className="size-1.5 rounded-full bg-foreground" />
-            Personal finance, without the spreadsheet
+            <span className="size-1.5 rounded-full bg-primary" />
+            Simple money tracking for everyday life
           </div>
           <h1
             className="animate-rise mx-auto mt-6 max-w-3xl text-4xl font-semibold leading-[1.05] tracking-tighter text-balance sm:text-5xl lg:text-6xl"
             style={{ animationDelay: '60ms' }}
           >
-            Know where your money goes every month.
+            Know where your money goes each month.
           </h1>
           <p
             className="animate-rise mx-auto mt-5 max-w-xl text-base leading-relaxed text-muted-foreground text-pretty sm:text-lg"
             style={{ animationDelay: '120ms' }}
           >
-            SpendWise turns everyday expenses into a clear picture of what was essential, what was optional, and what
-            you could save.
+            Write down what you spend in a few words. SpendWise sorts it for you and shows what you needed, what you
+            could cut back on, and how much you are saving.
           </p>
           <div
             className="animate-rise mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center"
@@ -150,7 +164,9 @@ export default function HomePage() {
               Try the demo
             </button>
           </div>
-          <p className="mt-4 text-xs text-subtle">The demo runs in your browser with sample data. No sign-up needed.</p>
+          <p className="mt-4 text-[13px] text-muted-foreground">
+            The demo uses sample data and stays in your browser. No sign-up needed.
+          </p>
         </section>
 
         {/* Product preview */}
@@ -171,19 +187,19 @@ export default function HomePage() {
         <section id="features" className="scroll-mt-20 border-t border-border">
           <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
             <div className="max-w-2xl">
-              <p className="text-[13px] font-medium text-muted-foreground">Features</p>
+              <p className="text-[13px] font-medium text-primary">What you get</p>
               <h2 className="mt-2 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-                Everything you need to understand your spending.
+                Simple tools to help you spend wisely.
               </h2>
               <p className="mt-4 text-base leading-relaxed text-muted-foreground">
-                Quick to log, easy to read, and honest about where the money went.
+                No spreadsheets and no money jargon. Just a clear picture of your month.
               </p>
             </div>
             <div className="mt-12 grid gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-2 lg:grid-cols-3">
-              {FEATURES.map(({ icon: Icon, title, body }) => (
+              {FEATURES.map(({ icon: Icon, title, body, tone }) => (
                 <div key={title} className="bg-card p-6 transition-colors hover:bg-accent/40 sm:p-7">
-                  <div className="flex size-8 items-center justify-center rounded-lg border border-border bg-background text-foreground">
-                    <Icon className="size-4" />
+                  <div className={cn('flex size-9 items-center justify-center rounded-lg', tone)}>
+                    <Icon className="size-4" aria-hidden />
                   </div>
                   <h3 className="mt-5 text-[15px] font-medium tracking-tight">{title}</h3>
                   <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{body}</p>
@@ -197,15 +213,17 @@ export default function HomePage() {
         <section className="border-t border-border">
           <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
             <div className="max-w-2xl">
-              <p className="text-[13px] font-medium text-muted-foreground">How it works</p>
+              <p className="text-[13px] font-medium text-primary">How it works</p>
               <h2 className="mt-2 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-                Three steps, a few minutes a week.
+                Three easy steps, a few minutes a week.
               </h2>
             </div>
             <ol className="mt-12 grid gap-8 sm:grid-cols-3 sm:gap-6">
               {STEPS.map((step, i) => (
                 <li key={step.title} className="border-t border-border pt-5">
-                  <span className="font-mono text-xs text-subtle tabular">0{i + 1}</span>
+                  <span className="tabular flex size-7 items-center justify-center rounded-full bg-primary/10 text-[13px] font-semibold text-primary">
+                    {i + 1}
+                  </span>
                   <h3 className="mt-3 text-[15px] font-medium tracking-tight">{step.title}</h3>
                   <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{step.body}</p>
                 </li>
@@ -227,7 +245,7 @@ export default function HomePage() {
                   Start with this month.
                 </h2>
                 <p className="mx-auto mt-4 max-w-md text-base text-muted-foreground">
-                  Add a few expenses and see where your money goes. It is free to use.
+                  Add a few expenses and see where your money goes. It is free.
                 </p>
                 <div className="mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
                   <Link href="/login" className={buttonVariants({ size: 'lg' })}>
@@ -250,13 +268,13 @@ export default function HomePage() {
           <div className="flex items-center gap-2">
             <Logo className="size-5 rounded-md" />
             <span className="text-[13px] font-medium">SpendWise</span>
-            <span className="text-[13px] text-subtle">· Personal finance, made clear</span>
+            <span className="text-[13px] text-muted-foreground">· Money tracking, made simple</span>
           </div>
           <div className="flex items-center gap-1 text-[13px] text-muted-foreground">
-            <a href="#features" className="rounded-md px-2 py-1 transition-colors hover:text-foreground">
+            <a href="#features" className="inline-flex h-9 items-center rounded-md px-2 transition-colors hover:text-foreground">
               Features
             </a>
-            <Link href="/login" className="rounded-md px-2 py-1 transition-colors hover:text-foreground">
+            <Link href="/login" className="inline-flex h-9 items-center rounded-md px-2 transition-colors hover:text-foreground">
               Sign in
             </Link>
             <ThemeToggle />
@@ -284,10 +302,10 @@ function ProductPreview() {
       {/* KPIs */}
       <div className="grid grid-cols-2 divide-border border-b border-border sm:grid-cols-4 sm:divide-x">
         {[
-          { label: 'Spent this month', value: '₹42,380', hint: '−8% vs September' },
-          { label: 'Budget left', value: '₹7,620', hint: '85% used' },
-          { label: 'Optional spend', value: '₹9,140', hint: '22% of total' },
-          { label: 'Saved', value: '18%', hint: 'of income' },
+          { label: 'Spent this month', value: '₹42,380', hint: '8% less than September', tone: 'text-success' },
+          { label: 'Left this month', value: '₹7,620', hint: '85% of budget used', tone: 'text-warning' },
+          { label: 'Optional', value: '₹9,140', hint: '22% of spending', tone: 'text-muted-foreground' },
+          { label: 'Saved', value: '18%', hint: 'of money in', tone: 'text-muted-foreground' },
         ].map((k, i) => (
           <div
             key={k.label}
@@ -295,7 +313,7 @@ function ProductPreview() {
           >
             <p className="text-xs text-muted-foreground">{k.label}</p>
             <p className="mt-1.5 text-xl font-semibold tracking-tight tabular sm:text-2xl">{k.value}</p>
-            <p className="mt-1 text-xs text-subtle tabular">{k.hint}</p>
+            <p className={cn('mt-1 text-xs tabular', k.tone)}>{k.hint}</p>
           </div>
         ))}
       </div>
@@ -304,14 +322,18 @@ function ProductPreview() {
         {/* Chart */}
         <div className="border-b border-border p-4 sm:p-5 md:col-span-3 md:border-b-0 md:border-r">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium">Daily spending</p>
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <p className="text-sm font-medium">Spending each day</p>
+            <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5">
-                <span className="size-2 rounded-sm bg-chart-1" />
+                <span className="size-2 rounded-sm bg-essential" />
                 Essential
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="size-2 rounded-sm bg-chart-3" />
+                <span className="size-2 rounded-sm bg-trim" />
+                Could trim
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="size-2 rounded-sm bg-optional" />
                 Optional
               </span>
             </div>
@@ -323,15 +345,16 @@ function ProductPreview() {
               ))}
             </div>
             <div className="relative flex h-full items-end gap-1.5 sm:gap-2">
-              {BARS.map(([ess, opt], i) => (
-                <div key={i} className="flex h-full flex-1 flex-col justify-end">
-                  <div className="rounded-t-[3px] bg-chart-3" style={{ height: `${opt}%` }} />
-                  <div className="bg-chart-1" style={{ height: `${ess}%` }} />
+              {BARS.map(([ess, trim, opt], i) => (
+                <div key={i} className="flex h-full flex-1 flex-col justify-end gap-px">
+                  <div className="rounded-t-[3px] bg-optional" style={{ height: `${opt}%` }} />
+                  <div className="bg-trim" style={{ height: `${trim}%` }} />
+                  <div className="bg-essential" style={{ height: `${ess}%` }} />
                 </div>
               ))}
             </div>
           </div>
-          <div className="mt-2 flex justify-between text-[11px] text-subtle tabular">
+          <div className="mt-2 flex justify-between text-[11px] text-muted-foreground tabular">
             <span>Oct 18</span>
             <span>Oct 31</span>
           </div>
@@ -340,15 +363,21 @@ function ProductPreview() {
         {/* Transactions */}
         <div className="md:col-span-2">
           <div className="flex items-center justify-between px-4 pt-4 sm:px-5 sm:pt-5">
-            <p className="text-sm font-medium">Recent</p>
-            <span className="text-xs text-muted-foreground">View all</span>
+            <p className="text-sm font-medium">Latest</p>
+            <span className="text-xs font-medium text-primary">See all</span>
           </div>
           <ul className="mt-2 divide-y divide-border">
             {TRANSACTIONS.map((t) => (
               <li key={t.name} className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
-                <div className="min-w-0">
-                  <p className="truncate text-[13px] font-medium">{t.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">{t.meta}</p>
+                <div className="flex min-w-0 items-center gap-3">
+                  <span
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{ background: PURCHASE_KINDS[t.purchase].color }}
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-[13px] font-medium">{t.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">{t.meta}</p>
+                  </div>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
                   <span className="text-[13px] font-medium tabular">{t.amount}</span>

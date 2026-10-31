@@ -21,6 +21,8 @@ export function toProfile(user: UserRow): Profile {
     timezone: user.timezone,
     language: user.language,
     monthly_income: user.monthly_income,
+    main_goals: JSON.parse(user.main_goals || '[]'),
+    user_type: user.user_type ?? null,
     created_at: user.created_at,
     updated_at: user.updated_at,
   };

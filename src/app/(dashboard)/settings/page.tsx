@@ -16,6 +16,9 @@ import { useSession } from '@/components/layout/session-provider';
 import { signOut } from '@/lib/auth-client';
 import { DataService } from '@/lib/data-service';
 import type { Profile } from '@/types/database';
+import { MAIN_GOALS } from '@/lib/main-goals';
+import { USER_TYPES } from '@/lib/user-types';
+import { cn } from '@/lib/utils';
 
 type ThemeChoice = 'light' | 'dark' | 'system';
 
@@ -110,8 +113,8 @@ function SaveFooter({ hint, dirty, saving }: { hint: React.ReactNode; dirty: boo
   return (
     <CardFooter className="justify-between gap-3 rounded-b-xl bg-muted/40">
       <p className="text-xs text-muted-foreground">{hint}</p>
-      <Button type="submit" size="sm" disabled={!dirty} loading={saving}>
-        Save
+      <Button type="submit" disabled={!dirty} loading={saving}>
+        Save changes
       </Button>
     </CardFooter>
   );
@@ -136,6 +139,76 @@ function SettingsSkeleton() {
         ))}
       </div>
     </div>
+  );
+}
+
+/** Who you are and what you want help with; shapes the assistant's questions and tips. */
+function SituationCard({ profile, onSaved }: { profile: Profile; onSaved: (p: Profile) => void }) {
+  const [userType, setUserType] = useState<string>(profile.user_type ?? '');
+  const [goals, setGoals] = useState<string[]>(profile.main_goals ?? []);
+  const [saving, setSaving] = useState(false);
+  const dirty =
+    userType !== (profile.user_type ?? '') || [...goals].sort().join() !== [...(profile.main_goals ?? [])].sort().join();
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const updated = await DataService.updateProfile({ user_type: userType || null, main_goals: goals });
+      onSaved(updated);
+      toast.success('Changes saved');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <form onSubmit={save}>
+        <CardContent className="space-y-5 pt-5">
+          <Field label="Which best describes you?" htmlFor="user-type">
+            <Select id="user-type" value={userType} onChange={(e) => setUserType(e.target.value)}>
+              <option value="">Prefer not to say</option>
+              {USER_TYPES.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <fieldset className="space-y-2">
+            <legend className="mb-1.5 text-[13px] font-medium">What would you like help with?</legend>
+            {MAIN_GOALS.map((g) => {
+              const on = goals.includes(g.id);
+              return (
+                <label
+                  key={g.id}
+                  className={cn(
+                    'flex min-h-10 cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-sm transition-colors',
+                    on ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent/50'
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => setGoals((prev) => (on ? prev.filter((x) => x !== g.id) : [...prev, g.id]))}
+                    className="size-4 accent-[var(--primary)]"
+                  />
+                  {g.label}
+                </label>
+              );
+            })}
+          </fieldset>
+        </CardContent>
+        <CardFooter className="justify-end">
+          <Button type="submit" disabled={!dirty} loading={saving}>
+            Save changes
+          </Button>
+        </CardFooter>
+      </form>
+    </Card>
   );
 }
 
@@ -203,14 +276,14 @@ export default function SettingsPage() {
     const income = profileForm.monthlyIncome.trim();
     const parsedIncome = income ? Number(income) : null;
     if (parsedIncome !== null && (!Number.isFinite(parsedIncome) || parsedIncome < 0)) {
-      toast.error('Monthly income must be a positive number');
+      toast.error('Please enter your monthly income as a number, or leave it empty.');
       return;
     }
     setSavingProfile(true);
     try {
       const updated = await save(
         { display_name: profileForm.displayName.trim() || null, monthly_income: parsedIncome },
-        'Profile saved'
+        'Your details are saved'
       );
       setProfileForm(toProfileForm(updated));
     } catch (err) {
@@ -226,7 +299,7 @@ export default function SettingsPage() {
     try {
       const updated = await save(
         { currency: prefsForm.currency, timezone: prefsForm.timezone, language: prefsForm.language },
-        'Preferences saved'
+        'Your preferences are saved'
       );
       setPrefsForm(toPreferencesForm(updated));
     } catch (err) {
@@ -254,20 +327,23 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-8">
-      <PageHeader title="Settings" description="Manage your profile, preferences and account." />
+      <PageHeader title="Settings" description="Your details, how things look, and your account." />
 
       <div className="divide-y divide-border border-t border-border">
-        <Section title="Profile" description="Your name appears in the sidebar. Income is used for savings and budget insights.">
+        <Section
+          title="About you"
+          description="We show your name in the menu. Your income helps us work out how much you're saving."
+        >
           <Card>
             <form onSubmit={handleSaveProfile}>
               <CardContent className="space-y-5 pt-5">
                 <div className="flex items-center gap-3">
-                  <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-foreground text-[13px] font-medium text-background">
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[13px] font-semibold text-primary">
                     {initials(profileForm.displayName)}
                   </div>
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-foreground">
-                      {profileForm.displayName.trim() || 'Unnamed'}
+                      {profileForm.displayName.trim() || 'Add your name'}
                     </p>
                     <p className="truncate text-xs text-muted-foreground">
                       {sandbox ? 'Demo account' : user?.email}
@@ -275,7 +351,7 @@ export default function SettingsPage() {
                   </div>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="Display name" htmlFor="display-name">
+                  <Field label="Your name" htmlFor="display-name">
                     <Input
                       id="display-name"
                       autoComplete="name"
@@ -286,9 +362,9 @@ export default function SettingsPage() {
                     />
                   </Field>
                   <Field
-                    label="Monthly income"
+                    label="Money in each month"
                     htmlFor="monthly-income"
-                    hint={`In ${savedPrefsForm?.currency ?? prefsForm.currency}, after tax.`}
+                    hint={`Your take-home pay in ${savedPrefsForm?.currency ?? prefsForm.currency}, after tax.`}
                   >
                     <Input
                       id="monthly-income"
@@ -304,12 +380,37 @@ export default function SettingsPage() {
                   </Field>
                 </div>
               </CardContent>
-              <SaveFooter hint="Leave income empty if you'd rather not say." dirty={profileDirty} saving={savingProfile} />
+              <SaveFooter
+                hint="You can leave income empty if you'd rather not say."
+                dirty={profileDirty}
+                saving={savingProfile}
+              />
             </form>
           </Card>
         </Section>
 
-        <Section title="Preferences" description="Currency, time zone and the language the assistant replies in." delay={40}>
+        {saved && (
+          <Section
+            title="Your situation"
+            description="Tell us a little about your life so the questions, tips and advice fit you."
+            delay={20}
+          >
+            <SituationCard
+              key={saved.updated_at}
+              profile={saved}
+              onSaved={(p) => {
+                setSaved(p);
+                void refresh();
+              }}
+            />
+          </Section>
+        )}
+
+        <Section
+          title="Preferences"
+          description="Your currency, your time zone, and the language the assistant talks to you in."
+          delay={40}
+        >
           <Card>
             <form onSubmit={handleSavePrefs}>
               <CardContent className="grid gap-4 pt-5 sm:grid-cols-2">
@@ -326,7 +427,7 @@ export default function SettingsPage() {
                     ))}
                   </Select>
                 </Field>
-                <Field label="Time zone" htmlFor="timezone" hint="Used to decide which day an expense falls on.">
+                <Field label="Time zone" htmlFor="timezone" hint="So expenses land on the right day.">
                   <Select
                     id="timezone"
                     value={prefsForm.timezone}
@@ -353,17 +454,17 @@ export default function SettingsPage() {
                   </Select>
                 </Field>
               </CardContent>
-              <SaveFooter hint="Applies across the dashboard." dirty={prefsDirty} saving={savingPrefs} />
+              <SaveFooter hint="Changes apply everywhere in the app." dirty={prefsDirty} saving={savingPrefs} />
             </form>
           </Card>
         </Section>
 
-        <Section title="Appearance" description="Choose a theme, or follow your system setting." delay={80}>
+        <Section title="Look and feel" description="Pick light or dark, or match your device." delay={80}>
           <Card>
             <CardContent className="flex flex-col gap-3 pt-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="space-y-0.5">
-                <p className="text-[13px] font-medium text-foreground">Theme</p>
-                <p className="text-xs text-muted-foreground">Saved on this device.</p>
+                <p className="text-sm font-medium text-foreground">Theme</p>
+                <p className="text-[13px] text-muted-foreground">Remembered on this device.</p>
               </div>
               <Segmented<ThemeChoice>
                 value={themeValue}
@@ -380,33 +481,33 @@ export default function SettingsPage() {
 
         <Section
           title="Account"
-          description={sandbox ? 'You are trying SpendWise in demo mode.' : 'The email you sign in with.'}
+          description={sandbox ? "You're trying SpendWise with sample data." : 'The email you sign in with.'}
           delay={120}
         >
           <Card>
             {sandbox ? (
               <>
                 <CardContent className="space-y-1 pt-5">
-                  <p className="text-sm font-medium text-foreground">Demo mode</p>
+                  <p className="text-sm font-medium text-foreground">You&apos;re in demo mode</p>
                   <p className="text-[13px] text-muted-foreground">
-                    Demo data is stored only in this browser. Create an account to keep your data and use it on
-                    any device.
+                    Everything here is saved only in this browser. Create a free account to keep your data and use
+                    it on any device.
                   </p>
                 </CardContent>
                 <CardFooter className="flex-wrap justify-end gap-2 rounded-b-xl bg-muted/40">
-                  <Button variant="ghost" size="sm" onClick={handleSignOut} loading={signingOut}>
+                  <Button variant="ghost" onClick={handleSignOut} loading={signingOut}>
                     <LogOut aria-hidden />
-                    Exit demo
+                    Leave demo
                   </Button>
                   <a
                     href="/login"
-                    className={buttonVariants({ size: 'sm' })}
+                    className={buttonVariants()}
                     onClick={(e) => {
                       e.preventDefault();
                       void handleSignOut();
                     }}
                   >
-                    Create a real account
+                    Create an account
                   </a>
                 </CardFooter>
               </>
@@ -418,8 +519,8 @@ export default function SettingsPage() {
                   </Field>
                 </CardContent>
                 <CardFooter className="justify-between gap-3 rounded-b-xl bg-muted/40">
-                  <p className="text-xs text-muted-foreground">Signing out ends this session on this device.</p>
-                  <Button variant="outline" size="sm" onClick={handleSignOut} loading={signingOut}>
+                  <p className="text-xs text-muted-foreground">You&apos;ll need to sign in again on this device.</p>
+                  <Button variant="outline" onClick={handleSignOut} loading={signingOut}>
                     <LogOut aria-hidden />
                     Sign out
                   </Button>
@@ -429,14 +530,14 @@ export default function SettingsPage() {
           </Card>
         </Section>
 
-        <Section title="Danger zone" description="Irreversible actions." delay={160}>
+        <Section title="Delete account" description="Things that can't be undone." delay={160}>
           <Card className="border-destructive/30">
             <CardContent className="space-y-1 pt-5">
-              <p className="text-sm font-medium text-destructive">Delete account</p>
+              <p className="text-sm font-medium text-destructive">Delete your account</p>
               <p className="text-[13px] text-muted-foreground">
                 {sandbox
-                  ? "Demo data lives only in this browser. Clearing this site's data in your browser settings removes it permanently."
-                  : 'Account deletion is not self-serve yet. To permanently remove your account and all of its data, contact support.'}
+                  ? "Demo data lives only in this browser. To remove it for good, clear this site's data in your browser settings."
+                  : "You can't delete your account from here yet. To remove your account and all of its data for good, please contact support."}
               </p>
             </CardContent>
           </Card>

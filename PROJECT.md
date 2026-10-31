@@ -28,7 +28,7 @@ Why a separate AI worker: the secret-protected AI surface stays small, can be de
 wrangler.jsonc               App worker config: D1, rate limiter, vars
 open-next.config.ts          OpenNext adapter config
 cloudflare-env.d.ts          Generated binding types (npm run cf-typegen)
-migrations/0001_init.sql     D1 schema + system categories
+migrations/                  D1 schema: 0001 init + categories, 0002 main_goals, 0003 user_type
 workers/spendwise-ai/        AI worker (own package.json and wrangler.jsonc)
 src/
   app/
@@ -69,9 +69,14 @@ tests/calculations.test.mjs  node:test suite importing the real TS modules
 
 ## 5. AI
 
-- **Extract:** the app sends the note, today's date and time zone in the user's zone, and the category names. The worker returns JSON matching a schema with category enums. The app validates it again with zod; on any failure it uses `parseExpenseHeuristically`. Nothing is saved until the user confirms the form.
-- **Coach:** the app sends only figures it computed (totals, essentiality split, top categories and merchants, budget usage, trim scenario). The prompt forbids new arithmetic and investment advice. Replies stream as plain text.
-- **Voice:** MediaRecorder (webm/opus or mp4) → base64 → Whisper → text → extract.
+Models (in `workers/spendwise-ai/wrangler.jsonc`): chat entry and statements use **Llama 4 Scout** (picked by benchmark: 9/9 on our test set, ~3 s median), the coach uses Llama 3.3 70B, voice uses Whisper.
+
+- **Chat entry** (`/add-expense`, `POST /api/ai/entry` → `/v1/entry`): one message can hold several purchases. The app sends the message, waiting items, recent turns, the user's profile (type, income, goals) and this month's spending by category. The model returns items plus one short `feedback` sentence (no numbers). Items missing an amount, or whose category is genuinely unclear, come back with `needs` + a question (+ tap-to-answer `options`); everything else is saved straight away with Undo/Edit on each line. Bare amounts and option taps are resolved on the client without an AI call.
+- **Amount guard** (worker): every amount must match a number the user actually wrote, used once, closest to that item's words; anything else becomes a question. Stops models copying one item's amount onto another.
+- **Warnings** (`spendingWarnings` in `finance.ts`, deterministic): budgets at 75/90/100%, spending more than earned this month, goals the month's leftover can't fund, single purchases ≥25% of income. Shown under saved entries.
+- **Bank statements** (paperclip in the chat, `POST /api/ai/statement` → `/v1/statement`): PDF/Excel via `env.AI.toMarkdown()`, CSV parsed in the worker; read in parallel chunks; amounts must appear in the text; card bill payments and own-account transfers are dropped. The client skips rows already recorded (`findDuplicates`: same type, amount ±₹1, date ±3 days, plus shared words or same category), bulk-saves the rest (`POST /api/transactions/import`, D1 batch), and asks about unclear payments one by one. "Undo import" removes the batch. Password-protected PDFs are rejected with instructions.
+- **Coach** (`/insights`): figures computed by the app plus user type and goals; streamed. The prompt forbids new arithmetic and investment advice.
+- **Memory**: both chats are kept in localStorage per account (`src/lib/chat-memory.ts`) and the last turns are sent as context.
 
 ## 6. Financial maths (`src/lib/calculations/finance.ts`)
 

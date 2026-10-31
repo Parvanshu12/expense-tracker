@@ -238,6 +238,20 @@ export const DataService = {
     return newTx;
   },
 
+  /** Saves many transactions at once (e.g. a bank statement import), in order. */
+  async addTransactions(txs: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>[]): Promise<Transaction[]> {
+    if (txs.length === 0) return [];
+    if (!isSandbox()) {
+      return (await api<{ transactions: Transaction[] }>('/api/transactions/import', { method: 'POST', body: { transactions: txs } }))
+        .transactions;
+    }
+    const stamp = new Date().toISOString();
+    const created: Transaction[] = txs.map((tx) => ({ ...tx, id: newLocalId('tx_'), created_at: stamp, updated_at: stamp }));
+    const current = readLocal<Transaction[]>(LOCAL_STORAGE_TRANSACTIONS, []);
+    writeLocal(LOCAL_STORAGE_TRANSACTIONS, [...created, ...current]);
+    return created;
+  },
+
   async updateTransaction(id: string, updates: Partial<Transaction>): Promise<Transaction | null> {
     if (!isSandbox()) {
       return (

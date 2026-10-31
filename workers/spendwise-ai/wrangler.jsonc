@@ -19,6 +19,8 @@
     "TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
     // Expense extraction (speed matters: it sits between typing and saving).
     "EXTRACT_MODEL": "@cf/meta/llama-3.1-8b-instruct-fast",
+    // Chat entry (several items per message, follow-up questions).
+    "ENTRY_MODEL": "@cf/meta/llama-4-scout-17b-16e-instruct",
     "SPEECH_MODEL": "@cf/openai/whisper-large-v3-turbo"
   }
   // Secret: API_SECRET (shared with the Next.js server as CF_AI_WORKER_SECRET).

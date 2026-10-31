@@ -11,6 +11,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { Lightbulb, TrendingUp } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -32,9 +33,27 @@ interface Scenario {
 }
 
 const SCENARIOS: Scenario[] = [
-  { key: 'conservative', label: 'Conservative', description: 'Debt / fixed income', rate: 7, color: 'var(--chart-3)' },
-  { key: 'moderate', label: 'Moderate', description: 'Broad index funds', rate: 10, color: 'var(--chart-2)' },
-  { key: 'aggressive', label: 'Aggressive', description: 'Growth equity', rate: 12, color: 'var(--chart-1)' },
+  {
+    key: 'conservative',
+    label: 'Low risk',
+    description: 'Like fixed deposits or bonds. Slower, steadier growth.',
+    rate: 7,
+    color: 'var(--info)',
+  },
+  {
+    key: 'moderate',
+    label: 'Medium risk',
+    description: 'Like an index fund that follows the whole market.',
+    rate: 10,
+    color: 'var(--primary)',
+  },
+  {
+    key: 'aggressive',
+    label: 'Higher risk',
+    description: 'Mostly shares. Can grow more, with bigger ups and downs.',
+    rate: 12,
+    color: 'var(--success)',
+  },
 ];
 
 interface ChartPoint {
@@ -98,9 +117,9 @@ function RangeField({
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
         className="h-1.5 w-full cursor-pointer"
-        style={{ accentColor: 'var(--foreground)' }}
+        style={{ accentColor: 'var(--primary)' }}
       />
-      <div className="tabular flex justify-between text-xs text-subtle">
+      <div className="tabular flex justify-between text-xs text-muted-foreground">
         <span>{min}</span>
         <span>{max}</span>
       </div>
@@ -178,29 +197,42 @@ export default function WealthSimulatorPage() {
   }, [currency]);
 
   const seriesName: Record<string, string> = {
-    invested: 'Invested',
-    conservative: 'Conservative 7%',
-    moderate: 'Moderate 10%',
-    aggressive: 'Aggressive 12%',
-    moderateReal: "Moderate, today's money",
+    invested: 'You put in',
+    conservative: 'Low risk, 7%',
+    moderate: 'Medium risk, 10%',
+    aggressive: 'Higher risk, 12%',
+    moderateReal: "Medium risk, in today's money",
   };
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Wealth simulator"
-        description="See how steady monthly investing could compound over time. Educational only."
+        title="Future planner"
+        description="See how putting a little aside every month could grow over the years."
       />
+
+      <div className="flex items-start gap-3 rounded-xl border border-border bg-card p-4 shadow-card animate-rise">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-info/12 text-info [&_svg]:size-4">
+          <Lightbulb aria-hidden />
+        </div>
+        <div className="space-y-0.5 text-sm">
+          <p className="font-medium text-foreground">How money grows over time</p>
+          <p className="text-muted-foreground">
+            When your savings earn a return, that return starts earning too. This is called compounding, and it
+            is why money left alone for longer grows faster. These are examples for learning, not promises.
+          </p>
+        </div>
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
         {/* Inputs */}
         <Card className="h-fit animate-rise">
           <CardHeader>
-            <CardTitle>Inputs</CardTitle>
-            <CardDescription>Adjust the assumptions.</CardDescription>
+            <CardTitle>Your numbers</CardTitle>
+            <CardDescription>Change these to see what happens.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
-            <Field label="Starting amount" htmlFor="starting-amount">
+            <Field label="Money you have now" htmlFor="starting-amount">
               <Input
                 id="starting-amount"
                 type="number"
@@ -212,7 +244,7 @@ export default function WealthSimulatorPage() {
                 className="tabular"
               />
             </Field>
-            <Field label="Monthly contribution" htmlFor="monthly-contribution">
+            <Field label="Amount you add each month" htmlFor="monthly-contribution">
               <Input
                 id="monthly-contribution"
                 type="number"
@@ -226,9 +258,9 @@ export default function WealthSimulatorPage() {
             </Field>
             <RangeField
               id="duration-years"
-              label="Years"
+              label="For how many years"
               value={durationYears}
-              display={`${durationYears} yrs`}
+              display={`${durationYears} ${durationYears === 1 ? 'year' : 'years'}`}
               min={1}
               max={40}
               step={1}
@@ -236,18 +268,18 @@ export default function WealthSimulatorPage() {
             />
             <RangeField
               id="inflation-rate"
-              label="Inflation"
+              label="Prices rise each year by"
               value={inflationRate}
               display={`${inflationRate}%`}
               min={0}
               max={10}
               step={0.5}
               onChange={setInflationRate}
-              hint="Converts future values into today's purchasing power."
+              hint="Things cost more over time (inflation). We use this to show what the future amount would buy today."
             />
           </CardContent>
           <CardFooter className="flex-col items-start gap-0.5">
-            <span className="text-xs text-muted-foreground">Total invested</span>
+            <span className="text-xs text-muted-foreground">Total you put in</span>
             <span className="tabular text-sm font-medium text-foreground">{money(totalInvested)}</span>
           </CardFooter>
         </Card>
@@ -264,23 +296,28 @@ export default function WealthSimulatorPage() {
                 <Stat
                   key={sc.key}
                   className="animate-rise"
-                  label={`${sc.label} · ${sc.rate}%`}
+                  label={`${sc.label} · ${sc.rate}% a year`}
                   icon={
                     <span
                       aria-hidden
-                      className="inline-block size-2 rounded-full"
-                      style={{ background: sc.color }}
-                    />
+                      className="flex size-7 items-center justify-center rounded-md"
+                      style={{
+                        background: `color-mix(in srgb, ${sc.color} 14%, transparent)`,
+                        color: sc.color,
+                      }}
+                    >
+                      <TrendingUp />
+                    </span>
                   }
                   value={money(value)}
                   hint={
                     <span className="tabular">
-                      {multiple.toFixed(1)}× invested
-                      {showReal && <> · {money(real)} today</>}
+                      {multiple.toFixed(1)}× what you put in
+                      {showReal && <> · worth {money(real)} today</>}
                     </span>
                   }
                 >
-                  <p className="text-xs text-subtle">{sc.description}</p>
+                  <p className="text-xs text-muted-foreground">{sc.description}</p>
                 </Stat>
               );
             })}
@@ -289,25 +326,27 @@ export default function WealthSimulatorPage() {
           <Card className="animate-rise" style={{ animationDelay: '60ms' }}>
             <CardHeader className="flex-row flex-wrap items-start justify-between gap-3">
               <div className="space-y-1">
-                <CardTitle>Projected growth</CardTitle>
-                <CardDescription className="tabular">Over {durationYears} years, compounded monthly</CardDescription>
+                <CardTitle>How it could grow</CardTitle>
+                <CardDescription className="tabular">
+                  Over {durationYears} {durationYears === 1 ? 'year' : 'years'}, if the yearly return stayed the same
+                </CardDescription>
               </div>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
                 {[...SCENARIOS].reverse().map((sc) => (
                   <span key={sc.key} className="inline-flex items-center gap-1.5">
-                    <span className="h-0.5 w-3 rounded-full" style={{ background: sc.color }} />
+                    <span className="h-1 w-3 rounded-full" style={{ background: sc.color }} />
                     {sc.label}
                   </span>
                 ))}
                 {showReal && (
                   <span className="inline-flex items-center gap-1.5">
-                    <span className="w-3 border-t-2 border-dashed" style={{ borderColor: 'var(--chart-2)' }} />
-                    Today&apos;s money
+                    <span className="w-3 border-t-2 border-dashed" style={{ borderColor: 'var(--primary)' }} />
+                    Medium, in today&apos;s money
                   </span>
                 )}
                 <span className="inline-flex items-center gap-1.5">
-                  <span className="size-2.5 rounded-sm" style={{ background: 'var(--chart-5)' }} />
-                  Invested
+                  <span className="size-2.5 rounded-sm" style={{ background: 'var(--chart-4)' }} />
+                  You put in
                 </span>
               </div>
             </CardHeader>
@@ -342,10 +381,10 @@ export default function WealthSimulatorPage() {
                     <Area
                       type="monotone"
                       dataKey="invested"
-                      stroke="var(--chart-4)"
+                      stroke="var(--chart-3)"
                       strokeWidth={1}
-                      fill="var(--chart-5)"
-                      fillOpacity={0.6}
+                      fill="var(--chart-4)"
+                      fillOpacity={0.5}
                       isAnimationActive={false}
                     />
                     {SCENARIOS.map((sc) => (
@@ -354,7 +393,7 @@ export default function WealthSimulatorPage() {
                         type="monotone"
                         dataKey={sc.key}
                         stroke={sc.color}
-                        strokeWidth={sc.key === 'aggressive' ? 2 : 1.5}
+                        strokeWidth={2}
                         dot={false}
                         activeDot={{ r: 3, strokeWidth: 0, fill: sc.color }}
                         isAnimationActive={false}
@@ -364,11 +403,12 @@ export default function WealthSimulatorPage() {
                       <Line
                         type="monotone"
                         dataKey="moderateReal"
-                        stroke="var(--chart-2)"
+                        stroke="var(--primary)"
+                        strokeOpacity={0.6}
                         strokeWidth={1.5}
                         strokeDasharray="4 4"
                         dot={false}
-                        activeDot={{ r: 3, strokeWidth: 0, fill: 'var(--chart-2)' }}
+                        activeDot={{ r: 3, strokeWidth: 0, fill: 'var(--primary)' }}
                         isAnimationActive={false}
                       />
                     )}
@@ -381,17 +421,20 @@ export default function WealthSimulatorPage() {
           <Card className="animate-rise" style={{ animationDelay: '120ms' }}>
             <CardHeader>
               <CardTitle>Year by year</CardTitle>
-              <CardDescription>Projected value every five years.</CardDescription>
+              <CardDescription>What it could be worth every five years.</CardDescription>
             </CardHeader>
             <div className="overflow-x-auto border-t border-border">
               <table className="w-full min-w-[480px] text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs text-muted-foreground">
                     <th className="h-10 px-5 text-left font-medium">Year</th>
-                    <th className="h-10 px-3 text-right font-medium">Invested</th>
+                    <th className="h-10 px-3 text-right font-medium">You put in</th>
                     {SCENARIOS.map((sc) => (
                       <th key={sc.key} className="h-10 px-3 text-right font-medium last:pr-5">
-                        {sc.label}
+                        <span className="inline-flex items-center gap-1.5">
+                          <span aria-hidden className="size-2 rounded-full" style={{ background: sc.color }} />
+                          {sc.label}
+                        </span>
                       </th>
                     ))}
                   </tr>
@@ -404,9 +447,7 @@ export default function WealthSimulatorPage() {
                       {SCENARIOS.map((sc) => (
                         <td
                           key={sc.key}
-                          className={`tabular px-3 text-right last:pr-5 ${
-                            sc.key === 'aggressive' ? 'font-medium text-foreground' : 'text-foreground'
-                          }`}
+                          className="tabular px-3 text-right text-foreground last:pr-5"
                         >
                           {money(row[sc.key])}
                         </td>
@@ -422,12 +463,12 @@ export default function WealthSimulatorPage() {
 
       <div className="space-y-1.5 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground">
         <p>
-          Returns shown are hypothetical projections at fixed annual rates, compounded monthly. Real markets
-          fluctuate, and returns can be lower, volatile or negative. Taxes, fees and inflation reduce real growth.
-          Nothing here is guaranteed.
+          These numbers are examples that assume the same return every year, added monthly. Real markets go up and
+          down, and returns can be lower or even negative. Taxes, fees and inflation reduce real growth. Nothing here
+          is guaranteed.
         </p>
         <p>
-          This simulator is for education only and is not personalised financial or investment advice. SpendWise
+          This planner is for learning only and is not personalised financial or investment advice. SpendWise
           does not sell, recommend or broker any investment.
         </p>
       </div>

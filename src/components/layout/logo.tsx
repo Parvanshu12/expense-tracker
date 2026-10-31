@@ -1,11 +1,11 @@
 import { cn } from '@/lib/utils';
 
-/** Monochrome mark: a rounded square with a rising stroke. */
+/** Brand mark: a rounded square with a rising stroke. */
 export function Logo({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        'inline-flex size-6 items-center justify-center rounded-[7px] bg-foreground text-background',
+        'inline-flex size-6 items-center justify-center rounded-[7px] bg-primary text-primary-foreground',
         className
       )}
     >

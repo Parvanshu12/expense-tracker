@@ -14,7 +14,7 @@ export function isAiConfigured(env: CloudflareEnv): boolean {
  */
 export async function callAiWorker(
   request: NextRequest,
-  path: '/v1/extract' | '/v1/coach' | '/v1/transcribe',
+  path: '/v1/extract' | '/v1/entry' | '/v1/statement' | '/v1/coach' | '/v1/transcribe',
   body: unknown
 ): Promise<{ response: Response; env: CloudflareEnv; userId: string | null }> {
   const env = await getEnv();

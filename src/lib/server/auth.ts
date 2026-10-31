@@ -17,6 +17,8 @@ export interface UserRow {
   timezone: string;
   language: string;
   monthly_income: number | null;
+  main_goals: string;
+  user_type: string | null;
   created_at: string;
   updated_at: string;
 }

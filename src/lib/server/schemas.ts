@@ -1,5 +1,7 @@
 import 'server-only';
 import { z } from 'zod';
+import { MAIN_GOAL_IDS } from '@/lib/main-goals';
+import { USER_TYPE_IDS } from '@/lib/user-types';
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be YYYY-MM-DD');
 const time = z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'must be HH:MM');
@@ -87,6 +89,8 @@ export const profileUpdate = z
     timezone: z.string().max(64).refine(isTimeZone, 'is not a known time zone'),
     language: z.enum(['en', 'hinglish']),
     monthly_income: z.number().min(0).max(1e11).nullable(),
+    main_goals: z.array(z.enum(MAIN_GOAL_IDS)).max(MAIN_GOAL_IDS.length),
+    user_type: z.enum(USER_TYPE_IDS).nullable(),
   })
   .partial();
 

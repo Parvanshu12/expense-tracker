@@ -1,6 +1,6 @@
 // Type-only imports keep this module runnable directly by Node's TypeScript
 // type stripping, which the unit tests in tests/ rely on.
-import type { Transaction, Budget, PeriodType } from '@/types/database';
+import type { Transaction, Budget, PeriodType, SavingsGoal } from '@/types/database';
 import type {
   FinancialSummary,
   CategorySpending,
@@ -383,4 +383,110 @@ export function simulateWealthGrowth(
   }
 
   return results;
+}
+
+export interface SpendingWarning {
+  text: string;
+  tone: 'success' | 'warning' | 'danger';
+}
+
+function formatINR(amount: number): string {
+  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
+}
+
+/**
+ * Plain-language warnings to show right after something is saved: budgets
+ * crossing 75/90/100%, spending more than earned this month, goals that this
+ * month's leftover money can't keep up with, and unusually big purchases.
+ * Dangers come first. When nothing needs attention, returns one reassuring
+ * budget line (or nothing).
+ */
+export function spendingWarnings(input: {
+  justSaved: Pick<Transaction, 'transaction_type' | 'category_id' | 'amount' | 'description'>[];
+  transactions: Transaction[];
+  budgets: Pick<Budget, 'category_id' | 'period_type' | 'amount'>[];
+  goals: Pick<SavingsGoal, 'name' | 'target_amount' | 'current_amount' | 'target_date'>[];
+  monthlyIncome: number | null | undefined;
+  today: string;
+  categoryName: (categoryId: string | null) => string;
+}): SpendingWarning[] {
+  const { justSaved, transactions, budgets, goals, today, categoryName } = input;
+  const expensesSaved = justSaved.filter((t) => t.transaction_type === 'expense');
+  if (expensesSaved.length === 0) return [];
+  const warnings: SpendingWarning[] = [];
+
+  // Budgets touched by what was just saved.
+  const affected = budgets
+    .filter((b) => expensesSaved.some((t) => b.category_id === null || b.category_id === t.category_id))
+    .map((b) => {
+      const spent = calculateBudgetSpent(transactions, b, today);
+      return { b, spent, pct: (spent / Number(b.amount)) * 100 };
+    })
+    .sort((x, y) => y.pct - x.pct);
+  for (const { b, spent, pct } of affected) {
+    const name = b.category_id === null ? 'your overall budget' : `your ${categoryName(b.category_id)} budget`;
+    const status = getBudgetStatus(pct);
+    if (status === 'over_budget') {
+      warnings.push({ tone: 'danger', text: `You've gone over ${name} by ${formatINR(spent - Number(b.amount))}.` });
+    } else if (status === 'critical' || status === 'warning') {
+      warnings.push({
+        tone: status === 'critical' ? 'danger' : 'warning',
+        text: `You've used ${Math.round(pct)}% of ${name}. Only ${formatINR(Number(b.amount) - spent)} is left.`,
+      });
+    }
+  }
+
+  // This month's money in vs out.
+  const month = today.slice(0, 7);
+  let earned = 0;
+  let spentThisMonth = 0;
+  for (const t of transactions) {
+    if (!t.purchase_date.startsWith(month)) continue;
+    if (t.transaction_type === 'income') earned += Number(t.amount);
+    else spentThisMonth += Number(t.amount);
+  }
+  const income = Math.max(earned, Number(input.monthlyIncome) || 0);
+  if (income > 0 && spentThisMonth > income) {
+    warnings.push({
+      tone: 'danger',
+      text: `You've spent ${formatINR(spentThisMonth - income)} more than you've earned this month.`,
+    });
+  } else if (income > 0) {
+    // Goals that this month's leftover can't keep up with.
+    const open = goals
+      .filter((g) => Number(g.current_amount) < Number(g.target_amount))
+      .map((g) => ({
+        name: g.name,
+        monthly: calculateSuggestedMonthlyContribution(Number(g.target_amount), Number(g.current_amount), g.target_date, today),
+      }))
+      .filter((g) => g.monthly > 0);
+    const needed = open.reduce((sum, g) => sum + g.monthly, 0);
+    const left = income - spentThisMonth;
+    if (needed > 0 && left < needed) {
+      const names = open.map((g) => g.name).slice(0, 2).join(' and ');
+      warnings.push({
+        tone: left < needed / 2 ? 'danger' : 'warning',
+        text: `At this pace you'll have about ${formatINR(left)} left this month, but ${names} need${open.length === 1 ? 's' : ''} about ${formatINR(needed)} a month.`,
+      });
+    }
+  }
+
+  // A single purchase that's a big share of monthly income.
+  if (income > 0) {
+    const big = expensesSaved.find((t) => Number(t.amount) >= income * 0.25);
+    if (big) {
+      warnings.push({
+        tone: 'warning',
+        text: `"${big.description}" is about ${Math.round((Number(big.amount) / income) * 100)}% of your monthly income. Worth a second look if it wasn't planned.`,
+      });
+    }
+  }
+
+  if (warnings.length === 0 && affected[0]) {
+    const { b, spent } = affected[0];
+    const name = b.category_id === null ? 'Monthly budget' : `${categoryName(b.category_id)} budget`;
+    return [{ tone: 'success', text: `${name}: ${formatINR(Number(b.amount) - spent)} left. You're on track.` }];
+  }
+  const order = { danger: 0, warning: 1, success: 2 };
+  return warnings.sort((a, b) => order[a.tone] - order[b.tone]);
 }

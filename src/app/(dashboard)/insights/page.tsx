@@ -11,6 +11,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useSession } from '@/components/layout/session-provider';
 import { DataService } from '@/lib/data-service';
+import { chatKey, clearChat, loadChat, saveChat } from '@/lib/chat-memory';
+import { mainGoalLabels } from '@/lib/main-goals';
+import { userTypeLabel } from '@/lib/user-types';
 import {
   calculateBudgetSpent,
   calculateCategoryBreakdown,
@@ -64,6 +67,8 @@ export default function InsightsPage() {
   const [question, setQuestion] = useState('');
   const [streaming, setStreaming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const memoryKey = chatKey('coach', user?.id);
+  const [restored, setRestored] = useState(false);
 
   const [optTrimPct, setOptTrimPct] = useState(20);
   const [discTrimPct, setDiscTrimPct] = useState(30);
@@ -81,6 +86,9 @@ export default function InsightsPage() {
         setTransactions(txs);
         setBudgets(bgts);
         setCategoryList(cats);
+        // Earlier conversation with the coach, if any.
+        setMessages((loadChat<Message[]>(memoryKey) ?? []).filter((m) => !m.pending));
+        setRestored(true);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Could not load your spending data');
       } finally {
@@ -88,7 +96,11 @@ export default function InsightsPage() {
       }
     }
     void loadData();
-  }, []);
+  }, [memoryKey]);
+
+  useEffect(() => {
+    if (restored) saveChat(memoryKey, messages.filter((m) => !m.pending).slice(-60));
+  }, [messages, restored, memoryKey]);
 
   const scoped = useMemo(
     () => (today ? filterTransactionsByDateRange(transactions, getReportingPeriodRange(scope, today)) : transactions),
@@ -113,6 +125,10 @@ export default function InsightsPage() {
     return {
       period: SCOPE_LABEL[scope],
       currency: 'INR',
+      userType: user?.user_type ?? null,
+      userTypeDescription: userTypeLabel(user?.user_type),
+      userGoals: mainGoalLabels(user?.main_goals),
+      monthlyIncome: user?.monthly_income ?? null,
       transactionCount: scoped.length,
       totalIncome: summary.totalIncome,
       totalExpenses: summary.totalExpenses,
@@ -154,7 +170,7 @@ export default function InsightsPage() {
         saving: potential.monthlyPotentialSavings,
       },
     };
-  }, [scoped, scope, summary, essentiality, categories, budgets, categoryList, transactions, today, optTrimPct, discTrimPct, potential]);
+  }, [scoped, scope, summary, essentiality, categories, budgets, categoryList, transactions, today, optTrimPct, discTrimPct, potential, user]);
 
   /** Grounded fallback when the AI service can't be reached. */
   const fallbackAnswer = (q: string): string => {
@@ -193,7 +209,7 @@ export default function InsightsPage() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           question: q,
-          history: history.slice(-8),
+          history: history.slice(-12),
           language: user?.language === 'hinglish' ? 'hinglish' : 'en',
           context: coachContext,
         }),
@@ -241,8 +257,8 @@ export default function InsightsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="AI coach"
-        description="Ask about your spending. Answers only use your own numbers, worked out by the app."
+        title="Ask for advice"
+        description="Ask anything about your money in your own words. Answers use only your own numbers."
         actions={
           <Segmented
             size="sm"
@@ -265,11 +281,19 @@ export default function InsightsPage() {
           <Card className="flex h-[600px] flex-col overflow-hidden lg:col-span-2 animate-rise">
             <div className="flex items-center justify-between border-b border-border px-5 py-3">
               <div className="flex items-center gap-2 text-sm font-medium">
-                <Sparkles className="size-4" /> Money coach
+                <Sparkles className="size-4 text-primary" /> Money coach
                 <span className="text-xs font-normal text-muted-foreground">· Workers AI</span>
               </div>
               {messages.length > 0 && (
-                <Button variant="ghost" size="sm" onClick={() => setMessages([])} disabled={streaming}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    clearChat(memoryKey);
+                    setMessages([]);
+                  }}
+                  disabled={streaming}
+                >
                   <RotateCcw /> New chat
                 </Button>
               )}
@@ -304,7 +328,7 @@ export default function InsightsPage() {
                       className={cn(
                         'max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
                         m.role === 'user'
-                          ? 'rounded-br-md bg-foreground text-background'
+                          ? 'rounded-br-md bg-primary text-primary-foreground'
                           : 'rounded-bl-md border border-border bg-muted/50 text-foreground'
                       )}
                     >

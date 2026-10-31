@@ -4,32 +4,41 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
- * Monochrome design tokens. Pages should use these semantic colors
- * (bg-background, text-muted-foreground, border-border, ...) rather than raw
- * palette classes, so light and dark mode stay in sync. The only hue is
- * --destructive, kept for errors and over-budget states.
+ * Design tokens. Mostly neutral, with a friendly indigo for primary actions
+ * and a few meaning-carrying colours: success (on track, income), warning
+ * (approaching a limit), destructive (over budget, errors), and the three
+ * spending types. Pages use these semantic names rather than raw palette
+ * classes so light and dark mode stay in sync.
  */
 :root {
-  --background: #fafafa;
+  --background: #f6f6f8;
   --foreground: #0a0a0a;
   --card: #ffffff;
   --card-foreground: #0a0a0a;
   --popover: #ffffff;
   --popover-foreground: #0a0a0a;
-  --primary: #0a0a0a;
-  --primary-foreground: #fafafa;
-  --secondary: #f4f4f5;
+  --primary: #4f46e5;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f1f4;
   --secondary-foreground: #18181b;
   --muted: #f4f4f5;
-  --muted-foreground: #71717a;
-  --subtle: #a1a1aa;
-  --accent: #f0f0f1;
+  --muted-foreground: #565663;
+  --subtle: #8a8a96;
+  --accent: #eeeef2;
   --accent-foreground: #0a0a0a;
-  --border: #e7e7e9;
-  --input: #e4e4e7;
-  --ring: #0a0a0a;
+  --border: #e2e2e8;
+  --input: #d9d9e0;
+  --ring: #4f46e5;
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
+  --success: #15803d;
+  --warning: #b45309;
+  --info: #2563eb;
+
+  /* Spending types: essential / could trim / optional. */
+  --essential: #2563eb;
+  --trim: #d97706;
+  --optional: #db2777;
 
   /* Charts: darkest = most important series. */
   --chart-1: #0a0a0a;
@@ -51,20 +60,27 @@
   --card-foreground: #fafafa;
   --popover: #141416;
   --popover-foreground: #fafafa;
-  --primary: #fafafa;
-  --primary-foreground: #09090b;
+  --primary: #6366f1;
+  --primary-foreground: #ffffff;
   --secondary: #1c1c1f;
   --secondary-foreground: #fafafa;
   --muted: #18181b;
-  --muted-foreground: #a1a1aa;
-  --subtle: #71717a;
-  --accent: #1c1c1f;
+  --muted-foreground: #b4b4be;
+  --subtle: #80808c;
+  --accent: #1e1e22;
   --accent-foreground: #fafafa;
-  --border: #232326;
-  --input: #2a2a2e;
-  --ring: #fafafa;
+  --border: #2a2a2f;
+  --input: #34343a;
+  --ring: #818cf8;
   --destructive: #f87171;
   --destructive-foreground: #09090b;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --info: #60a5fa;
+
+  --essential: #60a5fa;
+  --trim: #fbbf24;
+  --optional: #f472b6;
 
   --chart-1: #fafafa;
   --chart-2: #a1a1aa;
@@ -98,6 +114,12 @@
   --color-ring: var(--ring);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-essential: var(--essential);
+  --color-trim: var(--trim);
+  --color-optional: var(--optional);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
@@ -152,8 +174,8 @@
   }
 
   ::selection {
-    background: var(--foreground);
-    color: var(--background);
+    background: var(--primary);
+    color: var(--primary-foreground);
   }
 
   :focus-visible {

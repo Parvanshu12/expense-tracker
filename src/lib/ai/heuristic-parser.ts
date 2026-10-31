@@ -18,21 +18,35 @@ export type ParsedExpense = {
   clarification_question: string | null;
 };
 
+// Words after a number that make it a quantity rather than money.
+const QUANTITY_UNITS = String.raw`\s*(?:kg|g|gm|grams?|l|ltr|litres?|liters?|ml|km|pcs|pieces|people|persons?|log|dozen|baje|am|pm|x)\b`;
+const QUANTITY_AFTER = new RegExp(`^${QUANTITY_UNITS}`, 'i');
+
 const AMOUNT_PATTERN =
   /(?:(?:₹|rs\.?|inr|rupees|rupay)\s*([\d,]+(?:\.\d+)?)\s*(k)?)|([\d,]+(?:\.\d+)?)\s*(k)?\s*(?:₹|rs\.?|rupees|rupay|ka|ki|ke|bheje|diye|aaye)|(?:spent|paid|for|cost|deeye|bhara|liya)\s*([\d,]+(?:\.\d+)?)\s*(k)?/i;
 
+function toNumber(raw: string, thousands: boolean): number {
+  const value = parseFloat(raw.replace(/,/g, ''));
+  return thousands ? value * 1000 : value;
+}
+
 /** First money amount in a note ("₹250", "1200 rupees", "450 ka", "2.5k"), or null. */
 export function extractAmount(input: string): number | null {
-  const match = input.match(AMOUNT_PATTERN);
+  let match = input.match(AMOUNT_PATTERN);
+  // "for 4 people" is a quantity, not an amount.
+  if (match && QUANTITY_AFTER.test(input.slice((match.index ?? 0) + match[0].length))) match = null;
   let raw: string | undefined;
   let thousands = false;
   if (match) {
     raw = match[1] ?? match[3] ?? match[5];
     thousands = Boolean(match[2] ?? match[4] ?? match[6]);
   } else {
-    const general = input.match(/\b(\d+(?:\.\d{1,2})?)\s*(k)?\b/i);
-    raw = general?.[1];
-    thousands = Boolean(general?.[2]);
+    // No money cue: take the largest number that isn't a quantity ("2 kg", "4 people").
+    const candidates = [...input.matchAll(new RegExp(String.raw`\b(\d[\d,]*(?:\.\d{1,2})?)\s*(k)?\b(?!${QUANTITY_UNITS})`, 'gi'))]
+      .map((m) => ({ raw: m[1], thousands: Boolean(m[2]) }))
+      .sort((a, b) => toNumber(b.raw, b.thousands) - toNumber(a.raw, a.thousands));
+    raw = candidates[0]?.raw;
+    thousands = candidates[0]?.thousands ?? false;
   }
   if (!raw) return null;
   const value = parseFloat(raw.replace(/,/g, ''));
@@ -132,4 +146,22 @@ export function parseExpenseHeuristically(input: string, today: string, currency
     needs_clarification: amount === null,
     clarification_question: amount === null ? 'How much was it?' : null,
   };
+}
+
+/** Splits a note that lists several things ("450 lunch, 1200 petrol aur 180 sabzi"). */
+export function splitExpenseNote(input: string): string[] {
+  return input
+    .split(/\s*(?:,|;|\n|\band\b|\baur\b|\bplus\b|\balso\b|&)\s*/i)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 1);
+}
+
+/**
+ * Offline version of chat entry: one parsed item per recognisable part of the
+ * note. Parts with neither an amount nor a recognised category are dropped.
+ */
+export function parseExpensesHeuristically(input: string, today: string, currency = 'INR'): ParsedExpense[] {
+  return splitExpenseNote(input)
+    .map((part) => parseExpenseHeuristically(part, today, currency))
+    .filter((item) => item.amount !== null || !['Miscellaneous', 'Other Income'].includes(item.category));
 }

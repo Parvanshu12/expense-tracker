@@ -9,7 +9,7 @@ import { Kbd } from '@/components/ui/kbd';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { navigationGroups } from './sidebar';
 
-const extraTitles: Record<string, string> = { '/settings': 'Settings' };
+const extraTitles: Record<string, string> = { '/settings': 'Settings', '/add-expense': 'Add spending' };
 
 function titleFor(pathname: string | null): string {
   if (!pathname) return '';
@@ -59,7 +59,7 @@ export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
           <Link href="/add-expense">
             <Button size="sm" className="gap-1.5">
               <Plus />
-              <span className="hidden sm:inline">New expense</span>
+              <span className="hidden sm:inline">Add spending</span>
               <Kbd className="ml-0.5 hidden sm:inline-flex">N</Kbd>
             </Button>
           </Link>
