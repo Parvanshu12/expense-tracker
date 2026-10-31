@@ -17,13 +17,27 @@ import { Badge } from '@/components/ui/badge';
 import { DataService, DEFAULT_SYSTEM_CATEGORIES } from '@/lib/data-service';
 import { Budget, Transaction, Category } from '@/types/database';
 import { formatCurrency } from '@/lib/utils';
+import {
+  calculateBudgetSpent,
+  getBudgetStatus,
+  toLocalDateString,
+  type BudgetStatus,
+} from '@/lib/calculations/finance';
 import { toast } from 'sonner';
+
+const STATUS_BADGES: Record<BudgetStatus, { text: string; variant: 'success' | 'warning' | 'destructive' }> = {
+  on_track: { text: 'On Track', variant: 'success' },
+  warning: { text: 'Approaching Limit (>75%)', variant: 'warning' },
+  critical: { text: 'Critical (>90%)', variant: 'destructive' },
+  over_budget: { text: 'Over Budget', variant: 'destructive' },
+};
 
 export default function BudgetsPage() {
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>(DEFAULT_SYSTEM_CATEGORIES);
   const [loading, setLoading] = useState(true);
+  const [today, setToday] = useState<string>('');
 
   // Modal create state
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -37,11 +51,13 @@ export default function BudgetsPage() {
         const bgts = await DataService.getBudgets();
         const txs = await DataService.getTransactions();
         const cats = await DataService.getCategories();
+        setToday(toLocalDateString());
         setBudgets(bgts);
         setTransactions(txs);
         setCategories(cats);
       } catch (err) {
         console.error(err);
+        toast.error(err instanceof Error ? err.message : 'Could not load budgets');
       } finally {
         setLoading(false);
       }
@@ -52,35 +68,14 @@ export default function BudgetsPage() {
   // Compute spent amount for each budget based on real transactions
   const budgetAnalytics = useMemo(() => {
     return budgets.map((b) => {
-      let spent = 0;
-      if (b.category_id === null) {
-        // Overall budget: sum of all expense transactions
-        spent = transactions
-          .filter((t) => t.transaction_type === 'expense')
-          .reduce((sum, t) => sum + Number(t.amount), 0);
-      } else {
-        spent = transactions
-          .filter((t) => t.transaction_type === 'expense' && t.category_id === b.category_id)
-          .reduce((sum, t) => sum + Number(t.amount), 0);
-      }
-
+      // `today` is only set after mount, to avoid a hydration mismatch
+      const spent = today ? calculateBudgetSpent(transactions, b, today) : 0;
       const total = Number(b.amount);
       const remaining = Math.max(0, total - spent);
       const utilization = total > 0 ? (spent / total) * 100 : 0;
       const isOver = spent > total;
 
-      let statusBadge: { text: string; variant: 'success' | 'warning' | 'destructive' } = {
-        text: 'On Track',
-        variant: 'success',
-      };
-
-      if (utilization >= 100) {
-        statusBadge = { text: 'Over Budget', variant: 'destructive' };
-      } else if (utilization >= 90) {
-        statusBadge = { text: 'Critical (>90%)', variant: 'destructive' };
-      } else if (utilization >= 75) {
-        statusBadge = { text: 'Approaching Limit (>75%)', variant: 'warning' };
-      }
+      const statusBadge = STATUS_BADGES[getBudgetStatus(utilization)];
 
       const categoryName = b.category_id === null
         ? 'Overall Monthly Spending'
@@ -97,7 +92,7 @@ export default function BudgetsPage() {
         categoryName,
       };
     });
-  }, [budgets, transactions, categories]);
+  }, [budgets, transactions, categories, today]);
 
   const handleCreateBudget = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -114,7 +109,7 @@ export default function BudgetsPage() {
         category_id: catId,
         amount: amt,
         period_type: 'monthly',
-        start_date: new Date().toISOString().split('T')[0],
+        start_date: toLocalDateString(),
         end_date: null,
         alert_thresholds: [75, 90, 100],
       });
@@ -123,8 +118,8 @@ export default function BudgetsPage() {
       toast.success('Budget created successfully!');
       setIsModalOpen(false);
       setBudgetAmount('');
-    } catch {
-      toast.error('Failed to create budget');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create budget');
     }
   };
 
@@ -133,8 +128,8 @@ export default function BudgetsPage() {
       await DataService.deleteBudget(id);
       setBudgets((prev) => prev.filter((b) => b.id !== id));
       toast.success('Budget removed.');
-    } catch {
-      toast.error('Failed to delete budget');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete budget');
     }
   };
 

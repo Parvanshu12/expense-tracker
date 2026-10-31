@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { DataService } from '@/lib/data-service';
 import { SavingsGoal } from '@/types/database';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { calculateSuggestedMonthlyContribution, toLocalDateString } from '@/lib/calculations/finance';
 import { toast } from 'sonner';
 
 export default function SavingsGoalsPage() {
@@ -36,13 +37,10 @@ export default function SavingsGoalsPage() {
   // Add contribution modal
   const [selectedGoal, setSelectedGoal] = useState<SavingsGoal | null>(null);
   const [depositAmount, setDepositAmount] = useState('');
-  const [currentYear, setCurrentYear] = useState<number>(2026);
-  const [currentMonth, setCurrentMonth] = useState<number>(9);
+  const [today, setToday] = useState<string>('');
 
   useEffect(() => {
-    const d = new Date();
-    setCurrentYear(d.getFullYear());
-    setCurrentMonth(d.getMonth());
+    setToday(toLocalDateString());
     async function loadData() {
       try {
         await DataService.seedDemoDataIfEmpty();
@@ -50,6 +48,7 @@ export default function SavingsGoalsPage() {
         setGoals(data);
       } catch (err) {
         console.error(err);
+        toast.error(err instanceof Error ? err.message : 'Could not load savings goals');
       } finally {
         setLoading(false);
       }
@@ -90,8 +89,8 @@ export default function SavingsGoalsPage() {
       setCurrentAmount('');
       setTargetDate('');
       setDescription('');
-    } catch {
-      toast.error('Failed to create savings goal');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create savings goal');
     }
   };
 
@@ -100,8 +99,8 @@ export default function SavingsGoalsPage() {
       await DataService.deleteGoal(id);
       setGoals((prev) => prev.filter((g) => g.id !== id));
       toast.success('Goal removed.');
-    } catch {
-      toast.error('Failed to delete goal');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete goal');
     }
   };
 
@@ -120,8 +119,8 @@ export default function SavingsGoalsPage() {
         prev.map((g) => g.id === selectedGoal.id ? { ...g, current_amount: newAmount } : g)
       );
       toast.success(`Added ${formatCurrency(added)} to "${selectedGoal.name}"!`);
-    } catch {
-      toast.error('Failed to update goal');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update goal');
     }
     setSelectedGoal(null);
     setDepositAmount('');
@@ -159,15 +158,9 @@ export default function SavingsGoalsPage() {
           const progress = Math.min(100, Math.round((current / target) * 100));
           const remaining = Math.max(0, target - current);
 
-          // Calculate suggested monthly contribution:
-          // remaining / months remaining
-          const targetD = new Date(goal.target_date);
-          const diffMonths = Math.max(
-            1,
-            (targetD.getFullYear() - currentYear) * 12 +
-              (targetD.getMonth() - currentMonth)
-          );
-          const suggestedMonthly = remaining > 0 ? Math.round(remaining / diffMonths) : 0;
+          const suggestedMonthly = today
+            ? calculateSuggestedMonthlyContribution(target, current, goal.target_date, today)
+            : 0;
 
           return (
             <Card key={goal.id} className="p-5 flex flex-col justify-between space-y-4">

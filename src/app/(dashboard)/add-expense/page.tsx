@@ -24,6 +24,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Badge } from '@/components/ui/badge';
 import { DataService, DEFAULT_SYSTEM_CATEGORIES } from '@/lib/data-service';
 import { Category, Essentiality, TransactionType, EntryMethod } from '@/types/database';
+import { toLocalDateString } from '@/lib/calculations/finance';
 import { toast } from 'sonner';
 
 export default function AddExpensePage() {
@@ -46,12 +47,19 @@ export default function AddExpensePage() {
   const [transactionType, setTransactionType] = useState<TransactionType>('expense');
   const [description, setDescription] = useState('');
   const [merchant, setMerchant] = useState('');
-  const [categoryId, setCategoryId] = useState<string>('cat-food');
+  const [categoryId, setCategoryId] = useState<string>('');
   const [purchaseDate, setPurchaseDate] = useState<string>('');
   const [purchaseTime, setPurchaseTime] = useState<string>('12:00');
   const [paymentMethod, setPaymentMethod] = useState('UPI');
   const [essentiality, setEssentiality] = useState<Essentiality>('essential');
   const [notes, setNotes] = useState('');
+
+  // The chosen category must exist in the loaded list and match the transaction
+  // type; otherwise use the first valid one so the select and the saved value agree.
+  const categoryOptions = categories.filter((c) => c.category_type === transactionType);
+  const selectedCategoryId = categoryOptions.some((c) => c.id === categoryId)
+    ? categoryId
+    : categoryOptions[0]?.id ?? '';
 
   // AI metadata preserved for transparency
   const [originalInput, setOriginalInput] = useState<string | null>(null);
@@ -60,11 +68,18 @@ export default function AddExpensePage() {
 
   useEffect(() => {
     async function loadCats() {
-      const cats = await DataService.getCategories();
-      setCategories(cats);
+      try {
+        const cats = await DataService.getCategories();
+        setCategories(cats);
+      } catch (err) {
+        console.error(err);
+        // Don't leave the sandbox defaults selectable: their ids don't exist in Supabase.
+        setCategories([]);
+        toast.error(err instanceof Error ? err.message : 'Could not load categories');
+      }
     }
     loadCats();
-    setPurchaseDate(new Date().toISOString().split('T')[0]);
+    setPurchaseDate(toLocalDateString());
 
     // Check Speech Recognition support
     if (typeof window !== 'undefined' && ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
@@ -191,6 +206,11 @@ export default function AddExpensePage() {
       return;
     }
 
+    if (!selectedCategoryId) {
+      toast.error('Please choose a category.');
+      return;
+    }
+
     setSaving(true);
     try {
       const entryMethod: EntryMethod =
@@ -198,7 +218,7 @@ export default function AddExpensePage() {
 
       await DataService.addTransaction({
         user_id: 'current-user',
-        category_id: categoryId,
+        category_id: selectedCategoryId,
         transaction_type: transactionType,
         amount: numAmount,
         currency: 'INR',
@@ -476,17 +496,15 @@ export default function AddExpensePage() {
                   Category *
                 </label>
                 <select
-                  value={categoryId}
+                  value={selectedCategoryId}
                   onChange={(e) => setCategoryId(e.target.value)}
                   className="w-full h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  {categories
-                    .filter((c) => c.category_type === transactionType)
-                    .map((cat) => (
-                      <option key={cat.id} value={cat.id}>
-                        {cat.name}
-                      </option>
-                    ))}
+                  {categoryOptions.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>

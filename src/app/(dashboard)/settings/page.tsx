@@ -55,6 +55,7 @@ export default function SettingsPage() {
         setSupabaseReady(isSupabaseConfigured());
       } catch (err) {
         console.error(err);
+        toast.error(err instanceof Error ? err.message : 'Could not load your profile');
       } finally {
         setLoading(false);
       }
@@ -74,8 +75,8 @@ export default function SettingsPage() {
         monthly_income: monthlyIncome ? parseFloat(monthlyIncome) : null,
       });
       toast.success('Preferences updated successfully!');
-    } catch {
-      toast.error('Failed to update preferences');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update preferences');
     } finally {
       setSaving(false);
     }

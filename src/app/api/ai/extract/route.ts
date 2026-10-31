@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import OpenAI from 'openai';
+import { toLocalDateString } from '@/lib/calculations/finance';
 
 const aiExpenseSchema = z.object({
   transaction_type: z.enum(['expense', 'income']).default('expense'),
@@ -151,10 +152,12 @@ Output valid JSON matching the schema.`;
     else if (/(cash|roked)/i.test(lower)) payment_method = 'Cash';
 
     // 6. Date extraction
-    let purchase_date = new Date().toISOString().split('T')[0];
+    // The server usually runs in UTC, so resolve "today" in the user's default zone.
+    const timeZone = process.env.NEXT_PUBLIC_DEFAULT_TIMEZONE || 'Asia/Kolkata';
+    let purchase_date = toLocalDateString(new Date(), timeZone);
     if (lower.includes('yesterday') || lower.includes('kal')) {
       const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      purchase_date = yesterday.toISOString().split('T')[0];
+      purchase_date = toLocalDateString(yesterday, timeZone);
     }
 
     const result = {

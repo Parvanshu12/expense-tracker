@@ -22,6 +22,7 @@ import {
   calculateCategoryBreakdown,
   calculateEssentialityBreakdown,
   calculatePotentialSavings,
+  toLocalDateString,
 } from '@/lib/calculations/finance';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -44,6 +45,7 @@ export default function ReportsPage() {
         setBudgets(bgts);
       } catch (err) {
         console.error(err);
+        toast.error(err instanceof Error ? err.message : 'Could not load report data');
       } finally {
         setLoading(false);
       }
@@ -86,7 +88,7 @@ export default function ReportsPage() {
       const encodedUri = encodeURI(csvContent);
       const link = document.createElement('a');
       link.setAttribute('href', encodedUri);
-      link.setAttribute('download', `SpendWise_Financial_Report_${reportType}_${new Date().toISOString().split('T')[0]}.csv`);
+      link.setAttribute('download', `SpendWise_Financial_Report_${reportType}_${toLocalDateString()}.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

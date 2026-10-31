@@ -25,8 +25,13 @@ import {
   calculateFinancialSummary,
   calculateCategoryBreakdown,
   calculateEssentialityBreakdown,
+  getReportingPeriodRange,
+  filterTransactionsByDateRange,
+  toLocalDateString,
+  type DashboardPeriod,
 } from '@/lib/calculations/finance';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { toast } from 'sonner';
 import {
   ResponsiveContainer,
   BarChart,
@@ -50,12 +55,12 @@ const ESSENTIALITY_COLORS = {
 export default function DashboardOverviewPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
-  const [selectedPeriod, setSelectedPeriod] = useState<string>('this_month');
+  const [selectedPeriod, setSelectedPeriod] = useState<DashboardPeriod>('this_month');
   const [currentDateStr, setCurrentDateStr] = useState<string>('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setCurrentDateStr(new Date().toISOString().split('T')[0]);
+    setCurrentDateStr(toLocalDateString());
     async function loadData() {
       try {
         await DataService.seedDemoDataIfEmpty();
@@ -65,6 +70,7 @@ export default function DashboardOverviewPage() {
         setBudgets(bgts);
       } catch (err) {
         console.error('Error loading dashboard data:', err);
+        toast.error(err instanceof Error ? err.message : 'Could not load dashboard data');
       } finally {
         setLoading(false);
       }
@@ -76,29 +82,11 @@ export default function DashboardOverviewPage() {
 
   // Filter transactions based on selected reporting period
   const periodTransactions = useMemo(() => {
-    if (selectedPeriod === 'all_time' || !currentDateStr) return transactions;
-
-    const [year, month, day] = currentDateStr.split('-').map(Number);
-    const start = new Date(year, month - 1, day);
-
-    if (selectedPeriod === 'this_week') {
-      start.setDate(start.getDate() - 7);
-    } else if (selectedPeriod === 'this_month') {
-      start.setDate(1); // 1st of current month
-    } else if (selectedPeriod === 'last_month') {
-      start.setMonth(start.getMonth() - 1);
-      start.setDate(1);
-    } else if (selectedPeriod === 'last_3_months') {
-      start.setMonth(start.getMonth() - 3);
-    } else if (selectedPeriod === 'last_6_months') {
-      start.setMonth(start.getMonth() - 6);
-    } else if (selectedPeriod === 'this_year') {
-      start.setMonth(0);
-      start.setDate(1);
-    }
-
-    const startStr = start.toISOString().split('T')[0];
-    return transactions.filter((t) => t.purchase_date >= startStr);
+    if (!currentDateStr) return transactions;
+    return filterTransactionsByDateRange(
+      transactions,
+      getReportingPeriodRange(selectedPeriod, currentDateStr)
+    );
   }, [transactions, selectedPeriod, currentDateStr]);
 
   const summary = useMemo(() => {
@@ -194,14 +182,14 @@ export default function DashboardOverviewPage() {
         </div>
 
         <div className="flex bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
-          {[
+          {([
             { id: 'this_week', label: '7 Days' },
             { id: 'this_month', label: 'This Month' },
             { id: 'last_month', label: 'Last Month' },
             { id: 'last_3_months', label: '3 Months' },
             { id: 'this_year', label: 'YTD' },
             { id: 'all_time', label: 'All Time' },
-          ].map((p) => (
+          ] satisfies { id: DashboardPeriod; label: string }[]).map((p) => (
             <button
               key={p.id}
               onClick={() => setSelectedPeriod(p.id)}

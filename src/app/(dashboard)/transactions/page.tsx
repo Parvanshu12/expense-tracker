@@ -92,8 +92,8 @@ export default function TransactionsPage() {
         toast.success('Transaction updated successfully');
         setEditingTransaction(null);
       }
-    } catch {
-      toast.error('Failed to update transaction');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update transaction');
     } finally {
       setSavingEdit(false);
     }
@@ -109,6 +109,7 @@ export default function TransactionsPage() {
         setCategories(cats);
       } catch (err) {
         console.error('Failed to load transactions:', err);
+        toast.error(err instanceof Error ? err.message : 'Could not load transactions');
       } finally {
         setLoading(false);
       }
@@ -125,8 +126,8 @@ export default function TransactionsPage() {
       } else {
         toast.error('Could not delete transaction');
       }
-    } catch {
-      toast.error('Deletion error');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Deletion error');
     } finally {
       setDeletingId(null);
     }

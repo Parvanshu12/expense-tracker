@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { DataService } from '@/lib/data-service';
+import { toLocalDateString } from '@/lib/calculations/finance';
 import { toast } from 'sonner';
 
 export default function OnboardingPage() {
@@ -40,7 +41,7 @@ export default function OnboardingPage() {
           category_id: null, // Overall monthly budget
           amount: parseFloat(monthlyBudget),
           period_type: 'monthly',
-          start_date: new Date().toISOString().split('T')[0],
+          start_date: toLocalDateString(),
           end_date: null,
           alert_thresholds: [75, 90, 100],
         });
@@ -53,15 +54,15 @@ export default function OnboardingPage() {
           name: 'Emergency Reserve Fund',
           target_amount: monthlyIncome ? parseFloat(monthlyIncome) * 6 : 100000,
           current_amount: 0,
-          target_date: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+          target_date: toLocalDateString(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)),
           description: '6 months emergency cushion',
         });
       }
 
       toast.success('Your preferences have been saved!');
       router.push('/dashboard');
-    } catch {
-      toast.error('Failed to save preferences');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save preferences');
       router.push('/dashboard');
     } finally {
       setLoading(false);

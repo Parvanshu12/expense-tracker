@@ -1,6 +1,7 @@
 'use client';
 
-import { Transaction, Category, Budget, SavingsGoal, Profile, Essentiality } from '@/types/database';
+import { isAuthSessionMissingError } from '@supabase/supabase-js';
+import { Transaction, Category, Budget, SavingsGoal, Profile } from '@/types/database';
 import { isSupabaseConfigured, createClient } from './supabase/client';
 
 export const DEFAULT_SYSTEM_CATEGORIES: Category[] = [
@@ -35,404 +36,345 @@ const LOCAL_STORAGE_GOALS = 'spendwise_local_goals';
 const LOCAL_STORAGE_PROFILE = 'spendwise_local_profile';
 const LOCAL_STORAGE_CATEGORIES = 'spendwise_local_categories';
 
+type SupabaseBrowserClient = NonNullable<ReturnType<typeof createClient>>;
+
+interface LiveSession {
+  supabase: SupabaseBrowserClient;
+  userId: string;
+}
+
+/**
+ * Returns the Supabase client and signed-in user when the app runs against a
+ * real database, or null in local sandbox mode (Supabase not configured, or a
+ * demo-cookie session with nobody signed in).
+ *
+ * In live mode every DataService call goes to Supabase and throws on failure.
+ * It must never fall back to localStorage: that made failed saves look
+ * successful while the data only existed in one browser.
+ */
+async function getLiveSession(): Promise<LiveSession | null> {
+  if (!isSupabaseConfigured()) return null;
+  const supabase = createClient();
+  if (!supabase) return null;
+
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (user) return { supabase, userId: user.id };
+  if (error && !isAuthSessionMissingError(error)) {
+    throw new Error(`Could not verify your session: ${error.message}`);
+  }
+  return null;
+}
+
+function unwrap<T>(result: { data: T | null; error: { message: string } | null }, action: string): T {
+  if (result.error) throw new Error(`Could not ${action}: ${result.error.message}`);
+  if (result.data === null) throw new Error(`Could not ${action}: no data returned`);
+  return result.data;
+}
+
+function throwIfError(error: { message: string } | null, action: string): void {
+  if (error) throw new Error(`Could not ${action}: ${error.message}`);
+}
+
+function readLocal<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') return fallback;
+  const stored = localStorage.getItem(key);
+  return stored ? (JSON.parse(stored) as T) : fallback;
+}
+
+function writeLocal<T>(key: string, value: T): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function newLocalId(prefix: string): string {
+  return prefix + Math.random().toString(36).substring(2, 9);
+}
+
+const DEMO_PROFILE: Profile = {
+  id: 'demo-user-1',
+  display_name: 'Akshay',
+  currency: 'INR',
+  timezone: 'Asia/Kolkata',
+  language: 'en',
+  monthly_income: 85000,
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+};
+
 export const DataService = {
   // Profiles
   async getProfile(): Promise<Profile> {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-          if (data) return data as Profile;
-        }
-      }
+    const live = await getLiveSession();
+    if (live) {
+      const result = await live.supabase.from('profiles').select('*').eq('id', live.userId).single();
+      return unwrap(result, 'load your profile') as Profile;
     }
 
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem(LOCAL_STORAGE_PROFILE);
-      if (stored) return JSON.parse(stored);
-    }
-
-    return {
-      id: 'demo-user-1',
-      display_name: 'Akshay',
-      currency: 'INR',
-      timezone: 'Asia/Kolkata',
-      language: 'en',
-      monthly_income: 85000,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
+    return readLocal<Profile>(LOCAL_STORAGE_PROFILE, DEMO_PROFILE);
   },
 
   async updateProfile(profile: Partial<Profile>): Promise<Profile> {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { data, error } = await supabase
-            .from('profiles')
-            .update({ ...profile, updated_at: new Date().toISOString() })
-            .eq('id', user.id)
-            .select()
-            .single();
-          if (!error && data) return data as Profile;
-        }
-      }
+    const live = await getLiveSession();
+    if (live) {
+      const result = await live.supabase
+        .from('profiles')
+        .update({ ...profile, updated_at: new Date().toISOString() })
+        .eq('id', live.userId)
+        .select()
+        .single();
+      return unwrap(result, 'save your profile') as Profile;
     }
 
-    const current = await this.getProfile();
+    const current = readLocal<Profile>(LOCAL_STORAGE_PROFILE, DEMO_PROFILE);
     const updated = { ...current, ...profile, updated_at: new Date().toISOString() };
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(LOCAL_STORAGE_PROFILE, JSON.stringify(updated));
-    }
+    writeLocal(LOCAL_STORAGE_PROFILE, updated);
     return updated;
   },
 
   // Categories
   async getCategories(): Promise<Category[]> {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { data } = await supabase.from('categories').select('*');
-        if (data && data.length > 0) return data as Category[];
+    const live = await getLiveSession();
+    if (live) {
+      const result = await live.supabase.from('categories').select('*');
+      const categories = unwrap(result, 'load categories') as Category[];
+      if (categories.length === 0) {
+        throw new Error(
+          'No categories found in Supabase. Run supabase/setup_complete.sql to seed the system categories.'
+        );
       }
+      return categories;
     }
 
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem(LOCAL_STORAGE_CATEGORIES);
-      if (stored) {
-        const custom: Category[] = JSON.parse(stored);
-        return [...DEFAULT_SYSTEM_CATEGORIES, ...custom];
-      }
-    }
-
-    return DEFAULT_SYSTEM_CATEGORIES;
+    const custom = readLocal<Category[]>(LOCAL_STORAGE_CATEGORIES, []);
+    return [...DEFAULT_SYSTEM_CATEGORIES, ...custom];
   },
 
   async addCategory(cat: Omit<Category, 'id' | 'created_at'>): Promise<Category> {
+    const live = await getLiveSession();
+    if (live) {
+      const result = await live.supabase
+        .from('categories')
+        .insert({ ...cat, user_id: live.userId, is_system: false })
+        .select()
+        .single();
+      return unwrap(result, 'add the category') as Category;
+    }
+
     const newCat: Category = {
       ...cat,
-      id: 'cat_custom_' + Math.random().toString(36).substring(2, 9),
+      id: newLocalId('cat_custom_'),
       is_system: false,
       created_at: new Date().toISOString(),
     };
-
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { data, error } = await supabase
-            .from('categories')
-            .insert({ ...cat, user_id: user.id, is_system: false })
-            .select()
-            .single();
-          if (!error && data) return data as Category;
-        }
-      }
-    }
-
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem(LOCAL_STORAGE_CATEGORIES);
-      const custom: Category[] = stored ? JSON.parse(stored) : [];
-      const updated = [...custom, newCat];
-      localStorage.setItem(LOCAL_STORAGE_CATEGORIES, JSON.stringify(updated));
-    }
-
+    const custom = readLocal<Category[]>(LOCAL_STORAGE_CATEGORIES, []);
+    writeLocal(LOCAL_STORAGE_CATEGORIES, [...custom, newCat]);
     return newCat;
   },
 
   async deleteCategory(id: string): Promise<boolean> {
+    const live = await getLiveSession();
+    if (live) {
+      const { error } = await live.supabase.from('categories').delete().eq('id', id).eq('is_system', false);
+      throwIfError(error, 'delete the category');
+      return true;
+    }
+
     // Only allow deleting non-system categories
     if (DEFAULT_SYSTEM_CATEGORIES.some((c) => c.id === id)) {
       return false;
     }
-
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { error } = await supabase.from('categories').delete().eq('id', id).eq('is_system', false);
-        if (!error) return true;
-      }
-    }
-
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem(LOCAL_STORAGE_CATEGORIES);
-      if (stored) {
-        const custom: Category[] = JSON.parse(stored);
-        const filtered = custom.filter((c) => c.id !== id);
-        localStorage.setItem(LOCAL_STORAGE_CATEGORIES, JSON.stringify(filtered));
-        return true;
-      }
-    }
-    return false;
+    const custom = readLocal<Category[]>(LOCAL_STORAGE_CATEGORIES, []);
+    writeLocal(LOCAL_STORAGE_CATEGORIES, custom.filter((c) => c.id !== id));
+    return true;
   },
 
   // Transactions
   async getTransactions(): Promise<Transaction[]> {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { data, error } = await supabase
-          .from('transactions')
-          .select('*, category:categories(*)')
-          .order('purchase_date', { ascending: false });
-        if (!error && data) return data as Transaction[];
-      }
+    const live = await getLiveSession();
+    if (live) {
+      const result = await live.supabase
+        .from('transactions')
+        .select('*, category:categories(*)')
+        .order('purchase_date', { ascending: false });
+      return unwrap(result, 'load transactions') as Transaction[];
     }
 
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem(LOCAL_STORAGE_TRANSACTIONS);
-      if (stored) {
-        const txs: Transaction[] = JSON.parse(stored);
-        // Map category objects
-        const cats = await this.getCategories();
-        return txs.map(t => ({
-          ...t,
-          category: cats.find(c => c.id === t.category_id) || DEFAULT_SYSTEM_CATEGORIES[0],
-        }));
-      }
-    }
-
-    return [];
+    const txs = readLocal<Transaction[]>(LOCAL_STORAGE_TRANSACTIONS, []);
+    const cats = await this.getCategories();
+    return txs.map((t) => ({
+      ...t,
+      category: cats.find((c) => c.id === t.category_id) || DEFAULT_SYSTEM_CATEGORIES[0],
+    }));
   },
 
   async addTransaction(tx: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>): Promise<Transaction> {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { data, error } = await supabase
-            .from('transactions')
-            .insert({
-              ...tx,
-              user_id: user.id,
-            })
-            .select('*, category:categories(*)')
-            .single();
-
-          if (!error && data) return data as Transaction;
-        }
-      }
+    const live = await getLiveSession();
+    if (live) {
+      const result = await live.supabase
+        .from('transactions')
+        .insert({ ...tx, user_id: live.userId })
+        .select('*, category:categories(*)')
+        .single();
+      return unwrap(result, 'save the transaction') as Transaction;
     }
 
-    // Local sandbox mode
     const newTx: Transaction = {
       ...tx,
-      id: 'tx_' + Math.random().toString(36).substring(2, 9),
+      id: newLocalId('tx_'),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-
-    if (typeof window !== 'undefined') {
-      const current = await this.getTransactions();
-      const updated = [newTx, ...current];
-      localStorage.setItem(LOCAL_STORAGE_TRANSACTIONS, JSON.stringify(updated));
-    }
-
+    const current = readLocal<Transaction[]>(LOCAL_STORAGE_TRANSACTIONS, []);
+    writeLocal(LOCAL_STORAGE_TRANSACTIONS, [newTx, ...current]);
     return newTx;
   },
 
   async updateTransaction(id: string, updates: Partial<Transaction>): Promise<Transaction | null> {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { data, error } = await supabase
-          .from('transactions')
-          .update({ ...updates, updated_at: new Date().toISOString() })
-          .eq('id', id)
-          .select('*, category:categories(*)')
-          .single();
-        if (!error && data) return data as Transaction;
-      }
+    const live = await getLiveSession();
+    if (live) {
+      const result = await live.supabase
+        .from('transactions')
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select('*, category:categories(*)')
+        .single();
+      return unwrap(result, 'update the transaction') as Transaction;
     }
 
-    if (typeof window !== 'undefined') {
-      const current = await this.getTransactions();
-      const updated = current.map((t) => {
-        if (t.id === id) {
-          return {
-            ...t,
-            ...updates,
-            updated_at: new Date().toISOString(),
-          };
-        }
-        return t;
-      });
-      localStorage.setItem(LOCAL_STORAGE_TRANSACTIONS, JSON.stringify(updated));
-      return updated.find((t) => t.id === id) || null;
-    }
-    return null;
+    const current = readLocal<Transaction[]>(LOCAL_STORAGE_TRANSACTIONS, []);
+    const updated = current.map((t) =>
+      t.id === id ? { ...t, ...updates, updated_at: new Date().toISOString() } : t
+    );
+    writeLocal(LOCAL_STORAGE_TRANSACTIONS, updated);
+    return updated.find((t) => t.id === id) || null;
   },
 
   async deleteTransaction(id: string): Promise<boolean> {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { error } = await supabase.from('transactions').delete().eq('id', id);
-        if (!error) return true;
-      }
-    }
-
-    if (typeof window !== 'undefined') {
-      const current = await this.getTransactions();
-      const filtered = current.filter(t => t.id !== id);
-      localStorage.setItem(LOCAL_STORAGE_TRANSACTIONS, JSON.stringify(filtered));
+    const live = await getLiveSession();
+    if (live) {
+      const { error } = await live.supabase.from('transactions').delete().eq('id', id);
+      throwIfError(error, 'delete the transaction');
       return true;
     }
 
-    return false;
+    const current = readLocal<Transaction[]>(LOCAL_STORAGE_TRANSACTIONS, []);
+    writeLocal(LOCAL_STORAGE_TRANSACTIONS, current.filter((t) => t.id !== id));
+    return true;
   },
 
   // Budgets
   async getBudgets(): Promise<Budget[]> {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { data } = await supabase.from('budgets').select('*, category:categories(*)');
-        if (data) return data as Budget[];
-      }
+    const live = await getLiveSession();
+    if (live) {
+      const result = await live.supabase.from('budgets').select('*, category:categories(*)');
+      return unwrap(result, 'load budgets') as Budget[];
     }
 
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem(LOCAL_STORAGE_BUDGETS);
-      if (stored) return JSON.parse(stored);
-    }
-
-    return [];
+    return readLocal<Budget[]>(LOCAL_STORAGE_BUDGETS, []);
   },
 
   async saveBudget(budget: Omit<Budget, 'id' | 'created_at' | 'updated_at'>): Promise<Budget> {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { data, error } = await supabase
-            .from('budgets')
-            .insert({ ...budget, user_id: user.id })
-            .select('*, category:categories(*)')
-            .single();
-          if (!error && data) return data as Budget;
-        }
-      }
+    const live = await getLiveSession();
+    if (live) {
+      const result = await live.supabase
+        .from('budgets')
+        .insert({ ...budget, user_id: live.userId })
+        .select('*, category:categories(*)')
+        .single();
+      return unwrap(result, 'save the budget') as Budget;
     }
 
-    // Local sandbox mode
     const newBudget: Budget = {
       ...budget,
-      id: 'bgt_' + Math.random().toString(36).substring(2, 9),
+      id: newLocalId('bgt_'),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-
-    if (typeof window !== 'undefined') {
-      const current = await this.getBudgets();
-      const updated = [newBudget, ...current];
-      localStorage.setItem(LOCAL_STORAGE_BUDGETS, JSON.stringify(updated));
-    }
-
+    const current = readLocal<Budget[]>(LOCAL_STORAGE_BUDGETS, []);
+    writeLocal(LOCAL_STORAGE_BUDGETS, [newBudget, ...current]);
     return newBudget;
   },
 
   async deleteBudget(id: string): Promise<boolean> {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { error } = await supabase.from('budgets').delete().eq('id', id);
-        if (!error) return true;
-      }
-    }
-
-    if (typeof window !== 'undefined') {
-      const current = await this.getBudgets();
-      const filtered = current.filter((b) => b.id !== id);
-      localStorage.setItem(LOCAL_STORAGE_BUDGETS, JSON.stringify(filtered));
+    const live = await getLiveSession();
+    if (live) {
+      const { error } = await live.supabase.from('budgets').delete().eq('id', id);
+      throwIfError(error, 'delete the budget');
       return true;
     }
-    return false;
-  },
 
-  async updateGoal(id: string, updates: Partial<SavingsGoal>): Promise<SavingsGoal | null> {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { data, error } = await supabase
-          .from('savings_goals')
-          .update({ ...updates, updated_at: new Date().toISOString() })
-          .eq('id', id)
-          .select()
-          .single();
-        if (!error && data) return data as SavingsGoal;
-      }
-    }
-
-    if (typeof window !== 'undefined') {
-      const current = await this.getGoals();
-      const updated = current.map((g) =>
-        g.id === id ? { ...g, ...updates, updated_at: new Date().toISOString() } : g
-      );
-      localStorage.setItem(LOCAL_STORAGE_GOALS, JSON.stringify(updated));
-      return updated.find((g) => g.id === id) || null;
-    }
-    return null;
-  },
-
-  async deleteGoal(id: string): Promise<boolean> {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { error } = await supabase.from('savings_goals').delete().eq('id', id);
-        if (!error) return true;
-      }
-    }
-
-    if (typeof window !== 'undefined') {
-      const current = await this.getGoals();
-      const filtered = current.filter((g) => g.id !== id);
-      localStorage.setItem(LOCAL_STORAGE_GOALS, JSON.stringify(filtered));
-      return true;
-    }
-    return false;
+    const current = readLocal<Budget[]>(LOCAL_STORAGE_BUDGETS, []);
+    writeLocal(LOCAL_STORAGE_BUDGETS, current.filter((b) => b.id !== id));
+    return true;
   },
 
   // Savings Goals
   async getGoals(): Promise<SavingsGoal[]> {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
-      if (supabase) {
-        const { data } = await supabase.from('savings_goals').select('*');
-        if (data) return data as SavingsGoal[];
-      }
+    const live = await getLiveSession();
+    if (live) {
+      const result = await live.supabase
+        .from('savings_goals')
+        .select('*')
+        .order('created_at', { ascending: false });
+      return unwrap(result, 'load savings goals') as SavingsGoal[];
     }
 
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem(LOCAL_STORAGE_GOALS);
-      if (stored) return JSON.parse(stored);
-    }
-
-    return [];
+    return readLocal<SavingsGoal[]>(LOCAL_STORAGE_GOALS, []);
   },
 
   async addGoal(goal: Omit<SavingsGoal, 'id' | 'created_at' | 'updated_at'>): Promise<SavingsGoal> {
+    const live = await getLiveSession();
+    if (live) {
+      const result = await live.supabase
+        .from('savings_goals')
+        .insert({ ...goal, user_id: live.userId })
+        .select()
+        .single();
+      return unwrap(result, 'save the savings goal') as SavingsGoal;
+    }
+
     const newGoal: SavingsGoal = {
       ...goal,
-      id: 'goal_' + Math.random().toString(36).substring(2, 9),
+      id: newLocalId('goal_'),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+    const current = readLocal<SavingsGoal[]>(LOCAL_STORAGE_GOALS, []);
+    writeLocal(LOCAL_STORAGE_GOALS, [newGoal, ...current]);
+    return newGoal;
+  },
 
-    if (typeof window !== 'undefined') {
-      const current = await this.getGoals();
-      const updated = [newGoal, ...current];
-      localStorage.setItem(LOCAL_STORAGE_GOALS, JSON.stringify(updated));
+  async updateGoal(id: string, updates: Partial<SavingsGoal>): Promise<SavingsGoal | null> {
+    const live = await getLiveSession();
+    if (live) {
+      const result = await live.supabase
+        .from('savings_goals')
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select()
+        .single();
+      return unwrap(result, 'update the savings goal') as SavingsGoal;
     }
 
-    return newGoal;
+    const current = readLocal<SavingsGoal[]>(LOCAL_STORAGE_GOALS, []);
+    const updated = current.map((g) =>
+      g.id === id ? { ...g, ...updates, updated_at: new Date().toISOString() } : g
+    );
+    writeLocal(LOCAL_STORAGE_GOALS, updated);
+    return updated.find((g) => g.id === id) || null;
+  },
+
+  async deleteGoal(id: string): Promise<boolean> {
+    const live = await getLiveSession();
+    if (live) {
+      const { error } = await live.supabase.from('savings_goals').delete().eq('id', id);
+      throwIfError(error, 'delete the savings goal');
+      return true;
+    }
+
+    const current = readLocal<SavingsGoal[]>(LOCAL_STORAGE_GOALS, []);
+    writeLocal(LOCAL_STORAGE_GOALS, current.filter((g) => g.id !== id));
+    return true;
   },
 
   // Seed sample transactions if completely empty in demo mode so the user can see features immediately

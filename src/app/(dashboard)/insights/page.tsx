@@ -61,6 +61,7 @@ export default function InsightsPage() {
         setTransactions(txs);
       } catch (err) {
         console.error(err);
+        toast.error(err instanceof Error ? err.message : 'Could not load your spending data');
       } finally {
         setLoading(false);
       }

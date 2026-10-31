@@ -5,7 +5,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat&logo=typescript)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat&logo=tailwind-css)](https://tailwindcss.com/)
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=flat&logo=supabase)](https://supabase.com/)
-[![Tests Passing](https://img.shields.io/badge/Tests-8%2F8%20Passing-brightgreen?style=flat)]()
+[![Tests Passing](https://img.shields.io/badge/Tests-15%2F15%20Passing-brightgreen?style=flat)]()
 
 > **Understand Your Spending. Make Smarter Money Decisions.**
 
@@ -99,7 +99,7 @@ To connect your own remote Supabase database:
 | Command | Description |
 |---|---|
 | `npm run dev` | Starts local Next.js development server at `localhost:3000` |
-| `npm test` | Runs all 8 deterministic calculation tests |
+| `npm test` | Runs the calculation tests against `src/lib/calculations/finance.ts` (Node 22.18+) |
 | `npm run build` | Builds the production bundle (verifies 0 TypeScript errors) |
 | `npm run start` | Starts the production Next.js server |
 | `npm run lint` | Runs Next.js ESLint checks |

@@ -1,87 +1,18 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-// Core calculation logic unit tests
-function calculateFinancialSummary(transactions, monthlyBudget = 0, currency = 'INR', periodLabel = 'This Month') {
-  let totalIncome = 0;
-  let totalExpenses = 0;
-  let essentialSpending = 0;
-  let optimizableSpending = 0;
-  let discretionarySpending = 0;
-
-  for (const tx of transactions) {
-    if (tx.transaction_type === 'income') {
-      totalIncome += Number(tx.amount);
-    } else if (tx.transaction_type === 'expense') {
-      const amt = Number(tx.amount);
-      totalExpenses += amt;
-      if (tx.essentiality === 'essential') {
-        essentialSpending += amt;
-      } else if (tx.essentiality === 'optimizable') {
-        optimizableSpending += amt;
-      } else if (tx.essentiality === 'discretionary') {
-        discretionarySpending += amt;
-      }
-    }
-  }
-
-  const remainingBalance = totalIncome - totalExpenses;
-  const actualSavings = remainingBalance;
-  const budgetUtilization = monthlyBudget > 0 ? (totalExpenses / monthlyBudget) * 100 : 0;
-
-  return {
-    totalIncome,
-    totalExpenses,
-    remainingBalance,
-    actualSavings,
-    budgetUtilization,
-    totalBudget: monthlyBudget,
-    currency,
-    periodLabel,
-    essentialSpending,
-    optimizableSpending,
-    discretionarySpending,
-  };
-}
-
-function simulateWealthGrowth(input) {
-  const { startingAmount, monthlyContribution, annualReturnRate, durationYears, inflationRate = 0 } = input;
-  const r = annualReturnRate / 100;
-  const n = 12;
-  const results = [];
-
-  for (let year = 1; year <= durationYears; year++) {
-    const months = year * n;
-    const monthlyRate = r / n;
-
-    const principalGrowth = startingAmount * Math.pow(1 + monthlyRate, months);
-    let annuityGrowth = 0;
-    if (monthlyRate > 0) {
-      annuityGrowth = monthlyContribution * ((Math.pow(1 + monthlyRate, months) - 1) / monthlyRate);
-    } else {
-      annuityGrowth = monthlyContribution * months;
-    }
-
-    const futureValue = principalGrowth + annuityGrowth;
-    const totalInvested = startingAmount + monthlyContribution * months;
-    const hypotheticalGrowth = futureValue - totalInvested;
-
-    let inflationAdjustedValue = futureValue;
-    if (inflationRate > 0) {
-      inflationAdjustedValue = futureValue / Math.pow(1 + inflationRate / 100, year);
-    }
-
-    results.push({
-      year,
-      totalInvested: Math.round(totalInvested),
-      hypotheticalGrowth: Math.round(hypotheticalGrowth),
-      futureValue: Math.round(futureValue),
-      inflationAdjustedValue: Math.round(inflationAdjustedValue),
-    });
-  }
-
-  return results;
-}
+import {
+  calculateFinancialSummary,
+  calculatePotentialSavings,
+  simulateWealthGrowth,
+  calculateSuggestedMonthlyContribution,
+  getBudgetStatus,
+  getBudgetPeriodRange,
+  calculateBudgetSpent,
+  getReportingPeriodRange,
+  filterTransactionsByDateRange,
+  toLocalDateString,
+} from '../src/lib/calculations/finance.ts';
 
 describe('SpendWise AI Calculation Engine Tests', () => {
   it('correctly calculates income, expenses, remaining balance, and actual savings', () => {
@@ -138,46 +69,40 @@ describe('SpendWise AI Calculation Engine Tests', () => {
     assert.ok(yr10.inflationAdjustedValue < yr10.futureValue);
   });
 
-  it('calculates savings goal suggested monthly contributions accurately', () => {
-    const targetAmount = 120000;
-    const currentAmount = 20000;
-    const remaining = targetAmount - currentAmount; // 100,000
-    const monthsRemaining = 10;
-    const suggestedMonthly = remaining / monthsRemaining;
+  it('falls back to simple accumulation at a 0% return rate', () => {
+    const [yr1] = simulateWealthGrowth({
+      startingAmount: 1000,
+      monthlyContribution: 100,
+      annualReturnRate: 0,
+      durationYears: 1,
+    });
 
-    assert.equal(suggestedMonthly, 10000);
+    assert.equal(yr1.futureValue, 2200);
+    assert.equal(yr1.hypotheticalGrowth, 0);
+  });
+
+  it('calculates savings goal suggested monthly contributions accurately', () => {
+    // 100,000 remaining over 10 months (Oct 2026 -> Aug 2027)
+    assert.equal(calculateSuggestedMonthlyContribution(120000, 20000, '2027-08-15', '2026-10-31'), 10000);
+    // A goal due this month still divides by at least one month
+    assert.equal(calculateSuggestedMonthlyContribution(5000, 2000, '2026-10-31', '2026-10-01'), 3000);
+    // A completed goal needs nothing more
+    assert.equal(calculateSuggestedMonthlyContribution(5000, 6000, '2027-01-01', '2026-10-01'), 0);
   });
 
   it('correctly calculates variable potential savings reduction scenarios', () => {
-    const optimizable = 10000;
-    const discretionary = 6000;
-    const optTrim = 20; // 20%
-    const discTrim = 30; // 30%
+    // Trim 20% of 10,000 optimizable (2,000) and 30% of 6,000 discretionary (1,800)
+    const scenario = calculatePotentialSavings(10000, 6000, 20, 30);
 
-    const optSaved = (optimizable * optTrim) / 100; // 2,000
-    const discSaved = (discretionary * discTrim) / 100; // 1,800
-    const monthlyTotal = optSaved + discSaved; // 3,800
-    const annualTotal = monthlyTotal * 12; // 45,600
-
-    assert.equal(optSaved, 2000);
-    assert.equal(discSaved, 1800);
-    assert.equal(monthlyTotal, 3800);
-    assert.equal(annualTotal, 45600);
+    assert.equal(scenario.monthlyPotentialSavings, 3800);
+    assert.equal(scenario.annualPotentialSavings, 45600);
   });
 
   it('triggers correct budget warning status according to threshold thresholds', () => {
-    const getStatus = (spent, limit) => {
-      const pct = (spent / limit) * 100;
-      if (pct >= 100) return 'over_budget';
-      if (pct >= 90) return 'critical';
-      if (pct >= 75) return 'warning';
-      return 'on_track';
-    };
-
-    assert.equal(getStatus(5000, 10000), 'on_track');
-    assert.equal(getStatus(7500, 10000), 'warning');
-    assert.equal(getStatus(9200, 10000), 'critical');
-    assert.equal(getStatus(10500, 10000), 'over_budget');
+    assert.equal(getBudgetStatus(50), 'on_track');
+    assert.equal(getBudgetStatus(75), 'warning');
+    assert.equal(getBudgetStatus(92), 'critical');
+    assert.equal(getBudgetStatus(105), 'over_budget');
   });
 
   it('parses amounts accurately from English and Hinglish phrases', () => {
@@ -216,5 +141,82 @@ describe('SpendWise AI Calculation Engine Tests', () => {
     assert.equal(canUserUseCategory('user1-cat', 'user_1'), true);
     // User 1 CANNOT use User 2's custom category
     assert.equal(canUserUseCategory('user2-cat', 'user_1'), false);
+  });
+});
+
+describe('Reporting periods and budget scoping', () => {
+  const tx = (purchase_date, amount, extra = {}) => ({
+    purchase_date,
+    amount,
+    transaction_type: 'expense',
+    category_id: 'cat-food',
+    ...extra,
+  });
+
+  it('formats the calendar date in the given time zone, not UTC', () => {
+    // 00:30 on 1 Nov in India is still 31 Oct in UTC
+    const earlyMorningIST = new Date('2026-10-31T19:00:00Z');
+    assert.equal(toLocalDateString(earlyMorningIST, 'Asia/Kolkata'), '2026-11-01');
+    assert.equal(toLocalDateString(earlyMorningIST, 'UTC'), '2026-10-31');
+  });
+
+  it('bounds "last month" on both sides', () => {
+    assert.deepEqual(getReportingPeriodRange('last_month', '2026-10-31'), {
+      startDate: '2026-09-01',
+      endDate: '2026-09-30',
+    });
+    // January rolls back into December of the previous year
+    assert.deepEqual(getReportingPeriodRange('last_month', '2026-01-15'), {
+      startDate: '2025-12-01',
+      endDate: '2025-12-31',
+    });
+
+    const txs = [tx('2026-08-31', 1), tx('2026-09-01', 10), tx('2026-09-30', 100), tx('2026-10-05', 1000)];
+    const lastMonth = filterTransactionsByDateRange(txs, getReportingPeriodRange('last_month', '2026-10-31'));
+    assert.deepEqual(lastMonth.map((t) => t.amount), [10, 100]);
+  });
+
+  it('starts "this month" on the 1st without including the previous month', () => {
+    assert.deepEqual(getReportingPeriodRange('this_month', '2026-11-01'), {
+      startDate: '2026-11-01',
+      endDate: '2026-11-30',
+    });
+    const txs = [tx('2026-10-31', 1), tx('2026-11-01', 10)];
+    const thisMonth = filterTransactionsByDateRange(txs, getReportingPeriodRange('this_month', '2026-11-01'));
+    assert.deepEqual(thisMonth.map((t) => t.amount), [10]);
+  });
+
+  it('covers exactly 7 days for "this week" and clamps month arithmetic', () => {
+    assert.deepEqual(getReportingPeriodRange('this_week', '2026-03-03'), {
+      startDate: '2026-02-25',
+      endDate: '2026-03-03',
+    });
+    // 31 May minus 3 months is the end of February, not 3 March
+    assert.equal(getReportingPeriodRange('last_3_months', '2026-05-31').startDate, '2026-02-28');
+    assert.equal(getReportingPeriodRange('all_time', '2026-05-31'), null);
+  });
+
+  it('computes budget periods for each period type', () => {
+    // 1 Nov 2026 is a Sunday, so its ISO week starts Monday 26 Oct
+    assert.deepEqual(getBudgetPeriodRange('weekly', '2026-11-01'), { startDate: '2026-10-26', endDate: '2026-11-01' });
+    assert.deepEqual(getBudgetPeriodRange('monthly', '2028-02-10'), { startDate: '2028-02-01', endDate: '2028-02-29' });
+    assert.deepEqual(getBudgetPeriodRange('quarterly', '2026-11-01'), { startDate: '2026-10-01', endDate: '2026-12-31' });
+    assert.deepEqual(getBudgetPeriodRange('yearly', '2026-11-01'), { startDate: '2026-01-01', endDate: '2026-12-31' });
+  });
+
+  it('counts only the current period against a monthly budget', () => {
+    const txs = [
+      tx('2026-09-28', 5000), // previous month: excluded
+      tx('2026-10-03', 1200),
+      tx('2026-10-20', 800, { category_id: 'cat-transport' }),
+      tx('2026-10-21', 90000, { transaction_type: 'income', category_id: 'cat-salary' }),
+    ];
+
+    const overall = { category_id: null, period_type: 'monthly' };
+    const food = { category_id: 'cat-food', period_type: 'monthly' };
+
+    assert.equal(calculateBudgetSpent(txs, overall, '2026-10-31'), 2000);
+    assert.equal(calculateBudgetSpent(txs, food, '2026-10-31'), 1200);
+    assert.equal(calculateBudgetSpent(txs, food, '2026-09-30'), 5000);
   });
 });

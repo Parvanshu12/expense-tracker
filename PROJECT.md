@@ -27,7 +27,7 @@
 | **Charts & Analytics**| Recharts | Interactive Bar charts, Donut/Pie charts, responsive containers |
 | **Database & Auth** | Supabase (PostgreSQL 15+) | Row Level Security (RLS), Supabase Auth, `@supabase/ssr` |
 | **AI Integration** | OpenAI API (`gpt-4o-mini`) + Heuristic Parser | Server-side structured extraction, Zod validation, Hinglish support |
-| **Data Layer** | Hybrid Data Service (`src/lib/data-service.ts`) | Auto-switches between remote Supabase PostgreSQL and local storage sandbox |
+| **Data Layer** | Hybrid Data Service (`src/lib/data-service.ts`) | Uses Supabase when a user is signed in, localStorage in sandbox mode; never mixes the two |
 | **Testing** | Node.js Test Runner (`node:test`, `node:assert`) | Deterministic unit tests in `tests/calculations.test.mjs` |
 
 ---
@@ -75,7 +75,7 @@ c:\Users\aksha\Documents\Projects\Expense Tracker\
 ├── README.md                    # Quickstart guide
 ├── TODO.md                      # Feature & implementation checklist
 ├── tests/
-│   └── calculations.test.mjs    # 8 automated tests for financial formulas & AI parsing
+│   └── calculations.test.mjs    # Tests for finance.ts (imported directly) plus AI parsing
 ├── supabase/
 │   ├── setup_complete.sql       # COMPLETE MIGRATION SCRIPT (Tables, RLS, Triggers, Seed)
 │   ├── seed.sql                 # Default categories seed
@@ -126,7 +126,7 @@ c:\Users\aksha\Documents\Projects\Expense Tracker\
     │
     ├── lib/
     │   ├── utils.ts             # cn(), formatCurrency(INR), formatDate()
-    │   ├── data-service.ts      # UNIFIED DATA LAYER: Supabase with localStorage sandbox fallback
+    │   ├── data-service.ts      # UNIFIED DATA LAYER: Supabase (signed in) or localStorage (sandbox)
     │   ├── calculations/
     │   │   └── finance.ts       # Deterministic financial math formulas (FV, savings, essentiality)
     │   └── supabase/
@@ -189,6 +189,7 @@ The application provides a seamless dual-mode experience:
    - Active when `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are provided.
    - Sessions are managed via encrypted cookies using `@supabase/ssr`.
    - Routes starting with `/dashboard`, `/transactions`, `/add-expense`, etc., require an authenticated Supabase user.
+   - With a signed-in user, `DataService` reads and writes Supabase only. Any database error is thrown and shown as a toast; it never falls back to localStorage.
 
 2. **Local Sandbox Mode (Zero-Config Preview):**
    - If the user clicks **"Explore Sandbox Demo"** on `/login` or `/signup`, a browser cookie `spendwise_demo_session=true` is set.
@@ -262,6 +263,8 @@ The AI extraction endpoint lives at `src/app/api/ai/extract/route.ts`.
 1. **Hydration & Date Invariant:**
    - Next.js Turbopack throws hydration mismatch warnings if `new Date()` is evaluated during Client Component render or top-level `useMemo`.
    - Always initialize date strings inside `useEffect` or retrieve timestamps from state.
+   - Build `YYYY-MM-DD` strings with `toLocalDateString()` from `@/lib/calculations/finance`, never `toISOString().split('T')[0]`, which uses UTC and gives the previous day before 05:30 IST.
+   - Date-range logic (reporting periods, budget periods) lives in `finance.ts` so it is covered by the tests.
 2. **Path Alias:**
    - Always use `@/` to import from `src/` (e.g. `@/lib/data-service`, `@/components/ui/button`).
 3. **Icons:**
@@ -283,7 +286,7 @@ Runs at [http://localhost:3000](http://localhost:3000).
 ```powershell
 npm test
 ```
-Executes all 8 deterministic calculation tests in `tests/calculations.test.mjs`.
+Executes `tests/calculations.test.mjs`, which imports `src/lib/calculations/finance.ts` directly via Node's TypeScript type stripping (Node 22.18+).
 
 ### Production Build
 ```powershell

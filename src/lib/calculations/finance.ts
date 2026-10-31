@@ -1,13 +1,195 @@
-import { Transaction } from '@/types/database';
-import {
+// Type-only imports keep this module runnable directly by Node's TypeScript
+// type stripping, which the unit tests in tests/ rely on.
+import type { Transaction, Budget, PeriodType } from '@/types/database';
+import type {
   FinancialSummary,
   CategorySpending,
   EssentialityBreakdown,
-  SpendingTrendPoint,
   WealthSimulationInput,
   WealthSimulationYearResult,
   PotentialSavingsScenario,
+  ReportingPeriod,
+  DateRange,
 } from '@/types/finance';
+
+/**
+ * Formats a Date as a YYYY-MM-DD calendar date. Uses the runtime's local time
+ * zone unless an IANA `timeZone` is given. Never use `toISOString()` for this:
+ * it converts to UTC first, which lands on the previous day before 05:30 IST.
+ */
+export function toLocalDateString(date: Date = new Date(), timeZone?: string): string {
+  if (timeZone) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(date);
+    const get = (type: string) => parts.find((p) => p.type === type)?.value;
+    return `${get('year')}-${get('month')}-${get('day')}`;
+  }
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+// Calendar arithmetic on YYYY-MM-DD strings, done in UTC so DST and the
+// runtime's time zone can never shift a date.
+function parseDateString(dateStr: string): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+function formatDateString(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(dateStr: string, days: number): string {
+  const d = parseDateString(dateStr);
+  d.setUTCDate(d.getUTCDate() + days);
+  return formatDateString(d);
+}
+
+function daysInMonth(year: number, monthIndex: number): number {
+  return new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+}
+
+/** Moves by whole months, clamping the day (e.g. 31 May - 3 months = 28/29 Feb). */
+function addMonths(dateStr: string, months: number): string {
+  const d = parseDateString(dateStr);
+  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + months, 1));
+  const day = Math.min(d.getUTCDate(), daysInMonth(target.getUTCFullYear(), target.getUTCMonth()));
+  target.setUTCDate(day);
+  return formatDateString(target);
+}
+
+function monthRange(year: number, monthIndex: number): DateRange {
+  return {
+    startDate: formatDateString(new Date(Date.UTC(year, monthIndex, 1))),
+    endDate: formatDateString(new Date(Date.UTC(year, monthIndex, daysInMonth(year, monthIndex)))),
+  };
+}
+
+export type DashboardPeriod = Exclude<ReportingPeriod, 'custom'> | 'all_time';
+
+/**
+ * Inclusive date range for a dashboard reporting period, relative to `today`
+ * (YYYY-MM-DD). Returns null for 'all_time'. Calendar periods (this/last month,
+ * this year) cover the whole period; rolling windows end today.
+ */
+export function getReportingPeriodRange(period: DashboardPeriod, today: string): DateRange | null {
+  const d = parseDateString(today);
+  const year = d.getUTCFullYear();
+  const month = d.getUTCMonth();
+
+  switch (period) {
+    case 'this_week':
+      return { startDate: addDays(today, -6), endDate: today };
+    case 'this_month':
+      return monthRange(year, month);
+    case 'last_month':
+      return monthRange(month === 0 ? year - 1 : year, (month + 11) % 12);
+    case 'last_3_months':
+      return { startDate: addMonths(today, -3), endDate: today };
+    case 'last_6_months':
+      return { startDate: addMonths(today, -6), endDate: today };
+    case 'this_year':
+      return { startDate: `${year}-01-01`, endDate: `${year}-12-31` };
+    case 'all_time':
+      return null;
+  }
+}
+
+export function filterTransactionsByDateRange(
+  transactions: Transaction[],
+  range: DateRange | null
+): Transaction[] {
+  if (!range) return transactions;
+  return transactions.filter(
+    (t) => t.purchase_date >= range.startDate && t.purchase_date <= range.endDate
+  );
+}
+
+/**
+ * The budget period that contains `today`: the ISO week (Monday–Sunday),
+ * calendar month, calendar quarter, or calendar year.
+ */
+export function getBudgetPeriodRange(periodType: PeriodType, today: string): DateRange {
+  const d = parseDateString(today);
+  const year = d.getUTCFullYear();
+  const month = d.getUTCMonth();
+
+  switch (periodType) {
+    case 'weekly': {
+      const daysSinceMonday = (d.getUTCDay() + 6) % 7;
+      const startDate = addDays(today, -daysSinceMonday);
+      return { startDate, endDate: addDays(startDate, 6) };
+    }
+    case 'monthly':
+      return monthRange(year, month);
+    case 'quarterly': {
+      const firstMonth = Math.floor(month / 3) * 3;
+      return {
+        startDate: monthRange(year, firstMonth).startDate,
+        endDate: monthRange(year, firstMonth + 2).endDate,
+      };
+    }
+    case 'yearly':
+      return { startDate: `${year}-01-01`, endDate: `${year}-12-31` };
+  }
+}
+
+/**
+ * Expenses counted against a budget in its current period. An overall budget
+ * (category_id null) counts every expense category.
+ */
+export function calculateBudgetSpent(
+  transactions: Transaction[],
+  budget: Pick<Budget, 'category_id' | 'period_type'>,
+  today: string
+): number {
+  const range = getBudgetPeriodRange(budget.period_type, today);
+  return filterTransactionsByDateRange(transactions, range)
+    .filter(
+      (t) =>
+        t.transaction_type === 'expense' &&
+        (budget.category_id === null || t.category_id === budget.category_id)
+    )
+    .reduce((sum, t) => sum + Number(t.amount), 0);
+}
+
+export type BudgetStatus = 'on_track' | 'warning' | 'critical' | 'over_budget';
+
+/** Alert level for a budget utilization percentage (75% / 90% / 100% thresholds). */
+export function getBudgetStatus(utilizationPct: number): BudgetStatus {
+  if (utilizationPct >= 100) return 'over_budget';
+  if (utilizationPct >= 90) return 'critical';
+  if (utilizationPct >= 75) return 'warning';
+  return 'on_track';
+}
+
+/**
+ * Suggested monthly saving to reach a goal by its target date:
+ * remaining amount / whole months left (at least 1).
+ */
+export function calculateSuggestedMonthlyContribution(
+  targetAmount: number,
+  currentAmount: number,
+  targetDate: string,
+  today: string
+): number {
+  const remaining = Math.max(0, targetAmount - currentAmount);
+  if (remaining === 0) return 0;
+  const target = parseDateString(targetDate);
+  const now = parseDateString(today);
+  const monthsLeft = Math.max(
+    1,
+    (target.getUTCFullYear() - now.getUTCFullYear()) * 12 +
+      (target.getUTCMonth() - now.getUTCMonth())
+  );
+  return Math.round(remaining / monthsLeft);
+}
 
 export function calculateFinancialSummary(
   transactions: Transaction[],
