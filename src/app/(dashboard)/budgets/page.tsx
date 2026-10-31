@@ -21,20 +21,21 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Select } from '@/components/ui/select';
 import { Field } from '@/components/ui/label';
 import { Dialog } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { PageHeader } from '@/components/ui/page-header';
+import { Section } from '@/components/ui/section';
+import { Money } from '@/components/ui/money';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DataService, DEFAULT_SYSTEM_CATEGORIES } from '@/lib/data-service';
 import { Budget, Transaction, Category, PeriodType } from '@/types/database';
-import { formatCurrency } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import {
   calculateBudgetSpent,
+  getBudgetPeriodRange,
   getBudgetStatus,
   toLocalDateString,
   type BudgetStatus,
@@ -42,16 +43,14 @@ import {
 import { PURCHASE_KINDS, kindForCategory, type PurchaseKind } from '@/lib/categories/kinds';
 import { toast } from 'sonner';
 
-type StatusTone = 'success' | 'warning' | 'danger';
+type StatusTone = 'default' | 'warning' | 'danger';
 
-const STATUS_BADGES: Record<
-  BudgetStatus,
-  { text: string; variant: 'success' | 'warning' | 'destructive'; tone: StatusTone }
-> = {
-  on_track: { text: 'On track', variant: 'success', tone: 'success' },
-  warning: { text: 'Getting close', variant: 'warning', tone: 'warning' },
-  critical: { text: 'Almost at limit', variant: 'destructive', tone: 'danger' },
-  over_budget: { text: 'Over budget', variant: 'destructive', tone: 'danger' },
+/** Progress colour per status: brand while on track, warning when close, destructive near/over the limit. */
+const STATUS: Record<BudgetStatus, { text: string; tone: StatusTone }> = {
+  on_track: { text: 'On track', tone: 'default' },
+  warning: { text: 'Getting close', tone: 'warning' },
+  critical: { text: 'Almost at limit', tone: 'danger' },
+  over_budget: { text: 'Over budget', tone: 'danger' },
 };
 
 const KIND_ICONS: Record<PurchaseKind, LucideIcon> = {
@@ -69,24 +68,24 @@ const KIND_ICONS: Record<PurchaseKind, LucideIcon> = {
   income: Banknote,
 };
 
-/** Small coloured icon tile: kind colour for a category, primary for the overall budget. */
+/** Round 32px tile tinted with the kind colour (neutral for an all-spending budget). */
 function BudgetIcon({ kind }: { kind: PurchaseKind | null }) {
   if (!kind) {
     return (
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary [&_svg]:size-4">
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-foreground/[0.06] text-muted-foreground [&_svg]:size-4">
         <Wallet aria-hidden />
-      </div>
+      </span>
     );
   }
   const { color } = PURCHASE_KINDS[kind];
   const Icon = KIND_ICONS[kind];
   return (
-    <div
-      className="flex size-9 shrink-0 items-center justify-center rounded-lg [&_svg]:size-4"
+    <span
+      className="flex size-8 shrink-0 items-center justify-center rounded-full [&_svg]:size-4"
       style={{ background: color + '1f', color }}
     >
       <Icon aria-hidden />
-    </div>
+    </span>
   );
 }
 
@@ -96,6 +95,15 @@ const PERIOD_LABELS: Record<PeriodType, string> = {
   quarterly: 'This quarter',
   yearly: 'This year',
 };
+
+/** Whole days from `from` to `to` (both YYYY-MM-DD), counting both ends. */
+function daysInclusive(from: string, to: string): number {
+  const toUtc = (s: string) => {
+    const [y, m, d] = s.split('-').map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((toUtc(to) - toUtc(from)) / 86_400_000) + 1;
+}
 
 export default function BudgetsPage() {
   const [budgets, setBudgets] = useState<Budget[]>([]);
@@ -149,7 +157,8 @@ export default function BudgetsPage() {
       const utilization = total > 0 ? (spent / total) * 100 : 0;
       const isOver = spent > total;
 
-      const statusBadge = STATUS_BADGES[getBudgetStatus(utilization)];
+      const status = STATUS[getBudgetStatus(utilization)];
+      const daysLeft = today ? daysInclusive(today, getBudgetPeriodRange(b.period_type, today).endDate) : null;
 
       const category = b.category_id === null ? undefined : categories.find((c) => c.id === b.category_id);
       const categoryName =
@@ -166,12 +175,26 @@ export default function BudgetsPage() {
         remaining,
         utilization,
         isOver,
-        statusBadge,
+        status,
+        daysLeft,
         categoryName,
         kind,
       };
     });
   }, [budgets, transactions, categories, today]);
+
+  // The overall monthly budget is the hero; everything else is a row.
+  const overall = useMemo(
+    () =>
+      budgetAnalytics.find((b) => b.category_id === null && b.period_type === 'monthly') ??
+      budgetAnalytics.find((b) => b.category_id === null) ??
+      null,
+    [budgetAnalytics]
+  );
+  const rows = useMemo(
+    () => budgetAnalytics.filter((b) => b.id !== overall?.id).sort((a, b) => b.utilization - a.utilization),
+    [budgetAnalytics, overall]
+  );
 
   const handleCreateBudget = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -220,8 +243,13 @@ export default function BudgetsPage() {
     }
   };
 
+  const openCreate = (category: string = 'overall') => {
+    setSelectedCategory(category);
+    setIsModalOpen(true);
+  };
+
   const newBudgetButton = (
-    <Button onClick={() => setIsModalOpen(true)}>
+    <Button onClick={() => openCreate()}>
       <Plus />
       New budget
     </Button>
@@ -229,28 +257,31 @@ export default function BudgetsPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-12">
         <div className="flex items-end justify-between gap-4">
           <div className="space-y-2">
-            <Skeleton className="h-7 w-32" />
+            <Skeleton className="h-10 w-40" />
             <Skeleton className="h-4 w-64" />
           </div>
           <Skeleton className="h-9 w-32 rounded-lg" />
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {[0, 1, 2].map((i) => (
-            <Card key={i} className="space-y-4 p-5">
-              <div className="flex justify-between">
-                <div className="space-y-1.5">
-                  <Skeleton className="h-4 w-28" />
-                  <Skeleton className="h-3 w-16" />
-                </div>
-                <Skeleton className="h-5 w-16" />
+        <div className="space-y-4">
+          <Skeleton className="h-4 w-36" />
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-2 w-full rounded-full" />
+          <Skeleton className="h-3 w-56" />
+        </div>
+        <div className="space-y-1">
+          <Skeleton className="mb-4 h-4 w-24" />
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="flex items-center gap-3 py-3">
+              <Skeleton className="size-8 rounded-full" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-3.5 w-32" />
+                <Skeleton className="h-1 w-full max-w-sm rounded-full" />
               </div>
-              <Skeleton className="h-8 w-40" />
-              <Skeleton className="h-1.5 w-full rounded-full" />
-              <Skeleton className="h-3 w-full" />
-            </Card>
+              <Skeleton className="h-4 w-20" />
+            </div>
           ))}
         </div>
       </div>
@@ -260,7 +291,7 @@ export default function BudgetsPage() {
   const deletingBudget = deletingId ? budgetAnalytics.find((b) => b.id === deletingId) : undefined;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-12">
       <PageHeader
         title="Budgets"
         description="Set a limit for the month and see how much you have left."
@@ -275,72 +306,148 @@ export default function BudgetsPage() {
           action={newBudgetButton}
         />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {budgetAnalytics.map((item, i) => (
-            <Card
-              key={item.id}
-              className="flex flex-col animate-rise"
-              style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
-            >
-              <CardHeader className="flex-row items-start justify-between gap-3 pb-4">
-                <div className="flex min-w-0 items-center gap-3">
-                  <BudgetIcon kind={item.kind} />
-                  <div className="min-w-0 space-y-0.5">
-                    <CardTitle className="truncate">{item.categoryName}</CardTitle>
-                    <CardDescription>{PERIOD_LABELS[item.period_type] ?? item.period_type}</CardDescription>
-                  </div>
+        <>
+          {/* Overall budget: what's left */}
+          {overall ? (
+            <section className="group space-y-4 animate-rise">
+              <div className="flex items-end justify-between gap-4">
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    {overall.isOver ? 'Over budget' : 'Left to spend'} {PERIOD_LABELS[overall.period_type].toLowerCase()}
+                  </p>
+                  <Money
+                    amount={overall.isOver ? overall.spent - overall.total : overall.remaining}
+                    size="xl"
+                    tone={overall.isOver ? 'danger' : 'default'}
+                  />
                 </div>
-                <div className="-mr-2 -mt-1 flex shrink-0 items-center gap-1">
-                  <Badge variant={item.statusBadge.variant}>{item.statusBadge.text}</Badge>
+                <div className="flex items-center gap-1">
+                  <span
+                    className={cn(
+                      'tabular text-[13px]',
+                      overall.status.tone === 'default'
+                        ? 'text-muted-foreground'
+                        : overall.status.tone === 'warning'
+                          ? 'text-warning'
+                          : 'text-destructive'
+                    )}
+                  >
+                    {overall.utilization.toFixed(0)}% used
+                  </span>
                   <Button
                     variant="ghost"
-                    size="icon"
-                    onClick={() => setDeletingId(item.id)}
-                    aria-label={`Delete ${item.categoryName} budget`}
-                    title="Delete budget"
-                    className="hover:text-destructive"
+                    size="icon-sm"
+                    onClick={() => setDeletingId(overall.id)}
+                    aria-label="Remove the all-spending budget"
+                    title="Remove budget"
+                    className="hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
                   >
                     <Trash2 />
                   </Button>
                 </div>
-              </CardHeader>
+              </div>
+              <Progress value={overall.utilization} tone={overall.status.tone} className="h-2" />
+              <p className="text-[13px] text-muted-foreground">
+                <Money amount={overall.spent} size="sm" decimals={false} tone="muted" /> spent of{' '}
+                <Money amount={overall.total} size="sm" decimals={false} tone="muted" />
+                {overall.daysLeft !== null && (
+                  <>
+                    {' '}
+                    · {overall.daysLeft} {overall.daysLeft === 1 ? 'day' : 'days'} left
+                  </>
+                )}
+              </p>
+            </section>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              You don&apos;t have a limit for all your spending yet.{' '}
+              <button
+                type="button"
+                onClick={() => openCreate('overall')}
+                className="text-foreground underline underline-offset-4 transition-colors hover:text-brand"
+              >
+                Set a monthly limit
+              </button>{' '}
+              to see what&apos;s left each day.
+            </p>
+          )}
 
-              <CardContent className="mt-auto space-y-3">
-                <div className="flex flex-wrap items-baseline gap-x-1.5">
-                  <span className="tabular text-2xl font-semibold tracking-[-0.02em] text-foreground">
-                    {formatCurrency(item.spent)}
-                  </span>
-                  <span className="tabular text-sm text-muted-foreground">
-                    spent of {formatCurrency(item.total)}
-                  </span>
-                </div>
-
-                <Progress value={item.utilization} tone={item.statusBadge.tone} className="h-2" />
-
-                <div className="flex items-center justify-between gap-3 text-[13px]">
-                  <span className="tabular text-muted-foreground">{item.utilization.toFixed(0)}% used</span>
-                  {item.isOver ? (
-                    <span className="tabular font-medium text-destructive">
-                      {formatCurrency(item.spent - item.total)} over
-                    </span>
-                  ) : (
-                    <span
-                      className={
-                        item.statusBadge.tone === 'success'
-                          ? 'tabular font-medium text-success'
-                          : item.statusBadge.tone === 'warning'
-                            ? 'tabular font-medium text-warning'
-                            : 'tabular font-medium text-destructive'
-                      }
+          {/* Category budgets */}
+          <Section
+            title="By category"
+            description={rows.length > 0 ? 'Fullest first' : undefined}
+          >
+            {rows.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Add a limit for a category, like food or cabs, to keep a closer eye on it.{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const first = categories.find((c) => c.category_type === 'expense');
+                    openCreate(first?.id ?? 'overall');
+                  }}
+                  className="text-foreground underline underline-offset-4 transition-colors hover:text-brand"
+                >
+                  Add one
+                </button>
+              </p>
+            ) : (
+              <ul className="-mx-3 divide-y divide-border/70">
+                {rows.map((item, i) => (
+                  <li
+                    key={item.id}
+                    className="group flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-foreground/[0.025] animate-rise"
+                    style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
+                  >
+                    <BudgetIcon kind={item.kind} />
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <div className="flex items-baseline gap-2">
+                        <span className="truncate text-sm">{item.categoryName}</span>
+                        {item.period_type !== 'monthly' && (
+                          <span className="shrink-0 text-xs text-subtle">{PERIOD_LABELS[item.period_type]}</span>
+                        )}
+                      </div>
+                      <Progress value={item.utilization} tone={item.status.tone} className="h-1 max-w-md" />
+                    </div>
+                    <div className="shrink-0 space-y-0.5 text-right">
+                      <div className="text-sm">
+                        {item.isOver ? (
+                          <span className="text-destructive">
+                            <Money amount={item.spent - item.total} size="sm" decimals={false} tone="danger" /> over
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">
+                            <Money
+                              amount={item.remaining}
+                              size="sm"
+                              decimals={false}
+                              tone={item.status.tone === 'default' ? 'brand' : item.status.tone}
+                            />{' '}
+                            left
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        <Money amount={item.spent} size="sm" decimals={false} tone="muted" className="text-xs" /> of{' '}
+                        <Money amount={item.total} size="sm" decimals={false} tone="muted" className="text-xs" />
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => setDeletingId(item.id)}
+                      aria-label={`Remove ${item.categoryName} budget`}
+                      title="Remove budget"
+                      className="-mr-1 shrink-0 hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
                     >
-                      {formatCurrency(item.remaining)} left
-                    </span>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                      <Trash2 />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+        </>
       )}
 
       {/* Create dialog */}

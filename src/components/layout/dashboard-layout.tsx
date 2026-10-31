@@ -19,11 +19,16 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <SessionProvider fallback={<AppLoading />}>
-      <div className="flex min-h-screen bg-background">
+      {/* Sidebar sits on the paper canvas; content lives on one raised sheet. */}
+      <div className="flex min-h-screen bg-canvas">
         <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <Header onMenuClick={() => setSidebarOpen(true)} />
-          <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 md:px-8 md:py-8 animate-fade-in">{children}</main>
+        <div className="flex min-w-0 flex-1 flex-col lg:h-screen lg:p-2 lg:pl-0">
+          <div className="flex min-h-screen flex-1 flex-col bg-card lg:min-h-0 lg:overflow-hidden lg:rounded-[14px] lg:shadow-sheet">
+            <Header onMenuClick={() => setSidebarOpen(true)} />
+            <main id="app-scroll" className="flex-1 lg:overflow-y-auto">
+              <div className="mx-auto w-full max-w-[1080px] px-5 py-8 md:px-10 md:py-10 animate-fade-in">{children}</div>
+            </main>
+          </div>
         </div>
       </div>
     </SessionProvider>

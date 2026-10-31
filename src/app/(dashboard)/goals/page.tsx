@@ -1,21 +1,20 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { CircleCheck, PiggyBank, Plus, Target, Trash2 } from 'lucide-react';
+import { CircleCheck, PiggyBank, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Field } from '@/components/ui/label';
 import { Dialog } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Money } from '@/components/ui/money';
 import { DataService } from '@/lib/data-service';
 import { SavingsGoal } from '@/types/database';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { cn, formatCurrency, formatDate } from '@/lib/utils';
 import { calculateSuggestedMonthlyContribution, toLocalDateString } from '@/lib/calculations/finance';
 import { toast } from 'sonner';
 
@@ -156,29 +155,25 @@ export default function SavingsGoalsPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-12">
         <div className="flex items-end justify-between gap-4">
           <div className="space-y-2">
-            <Skeleton className="h-7 w-24" />
-            <Skeleton className="h-4 w-64" />
+            <Skeleton className="h-10 w-48" />
+            <Skeleton className="h-4 w-72" />
           </div>
           <Skeleton className="h-9 w-28 rounded-lg" />
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="divide-y divide-border/70">
           {[0, 1, 2].map((i) => (
-            <Card key={i} className="space-y-4 p-5">
-              <div className="space-y-1.5">
-                <Skeleton className="h-4 w-32" />
-                <Skeleton className="h-3 w-20" />
+            <div key={i} className="flex items-center gap-5 py-5">
+              <Skeleton className="h-10 w-16" />
+              <div className="flex-1 space-y-2.5">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-1 w-full rounded-full" />
+                <Skeleton className="h-3 w-56" />
               </div>
-              <Skeleton className="h-9 w-20" />
-              <Skeleton className="h-2 w-full rounded-full" />
-              <div className="grid grid-cols-2 gap-3">
-                <Skeleton className="h-8" />
-                <Skeleton className="h-8" />
-              </div>
-              <Skeleton className="h-8 w-full rounded-md" />
-            </Card>
+              <Skeleton className="hidden h-8 w-28 rounded-md sm:block" />
+            </div>
           ))}
         </div>
       </div>
@@ -188,7 +183,7 @@ export default function SavingsGoalsPage() {
   const deletingGoal = deletingId ? goals.find((g) => g.id === deletingId) : undefined;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-12">
       <PageHeader
         title="Savings goals"
         description="Something you're saving for, and how much to put aside each month to get there."
@@ -203,7 +198,7 @@ export default function SavingsGoalsPage() {
           action={newGoalButton}
         />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="-mx-3 divide-y divide-border/70">
           {goals.map((goal, i) => {
             const target = Number(goal.target_amount);
             const current = Number(goal.current_amount);
@@ -216,88 +211,78 @@ export default function SavingsGoalsPage() {
               : 0;
 
             return (
-              <Card
+              <li
                 key={goal.id}
-                className="flex flex-col animate-rise"
+                className="group grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-4 gap-y-3 rounded-lg px-3 py-5 transition-colors hover:bg-foreground/[0.025] animate-rise sm:grid-cols-[5.5rem_minmax(0,1fr)_auto] sm:items-center sm:gap-x-6"
                 style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
               >
-                <CardHeader className="flex-row items-start justify-between gap-3 pb-4">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div
-                      className={
-                        reached
-                          ? 'flex size-9 shrink-0 items-center justify-center rounded-lg bg-success/12 text-success [&_svg]:size-4'
-                          : 'flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary [&_svg]:size-4'
-                      }
-                    >
-                      {reached ? <CircleCheck aria-hidden /> : <Target aria-hidden />}
-                    </div>
-                    <div className="min-w-0 space-y-0.5">
-                      <CardTitle className="truncate">{goal.name}</CardTitle>
-                      <CardDescription className="tabular">By {formatDate(goal.target_date)}</CardDescription>
-                    </div>
-                  </div>
-                  <div className="-mr-2 -mt-1 flex shrink-0 items-center gap-1">
-                    {reached && <Badge variant="success">Reached</Badge>}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setDeletingId(goal.id)}
-                      aria-label={`Delete ${goal.name}`}
-                      title="Remove goal"
-                      className="hover:text-destructive"
-                    >
-                      <Trash2 />
-                    </Button>
-                  </div>
-                </CardHeader>
-
-                <CardContent className="flex flex-1 flex-col gap-4">
-                  {goal.description && (
-                    <p className="line-clamp-2 text-[13px] text-muted-foreground">{goal.description}</p>
+                <div
+                  className={cn(
+                    'tabular font-display text-[40px] leading-none tracking-[-0.01em] sm:text-[44px]',
+                    reached ? 'text-success' : 'text-foreground'
                   )}
+                  aria-label={`${progress}% saved`}
+                >
+                  {progress}
+                  <span className="text-[0.5em] text-muted-foreground">%</span>
+                </div>
 
-                  <div className="mt-auto space-y-2.5">
-                    <div className="flex flex-wrap items-baseline gap-x-1.5">
-                      <span className="tabular text-2xl font-semibold tracking-[-0.02em] text-foreground">
-                        {formatCurrency(current)}
-                      </span>
-                      <span className="tabular text-sm text-muted-foreground">saved of {formatCurrency(target)}</span>
-                    </div>
-                    <Progress value={progress} tone={reached ? 'success' : 'default'} className="h-2" />
-                    <div className="flex items-center justify-between gap-3 text-[13px]">
-                      <span className={reached ? 'tabular font-medium text-success' : 'tabular font-medium text-primary'}>
-                        {progress}% there
-                      </span>
-                      {!reached && (
-                        <span className="tabular text-muted-foreground">{formatCurrency(remaining)} to go</span>
+                <div className="min-w-0 space-y-2.5">
+                  <div className="space-y-0.5">
+                    <div className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="truncate text-[15px] font-medium tracking-[-0.01em]">{goal.name}</span>
+                      {reached && (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
+                          <CircleCheck className="size-3.5" aria-hidden />
+                          Reached
+                        </span>
                       )}
                     </div>
+                    <p className="truncate text-[13px] text-muted-foreground">
+                      <span className="tabular">By {formatDate(goal.target_date)}</span>
+                      {goal.description && <> · {goal.description}</>}
+                    </p>
                   </div>
-
-                  <p className="border-t border-border pt-4 text-[13px] text-muted-foreground">
+                  <Progress value={progress} tone={reached ? 'success' : 'default'} className="h-1" />
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-[13px] text-muted-foreground">
+                    <span>
+                      <Money amount={current} size="sm" decimals={false} /> saved of{' '}
+                      <Money amount={target} size="sm" decimals={false} tone="muted" />
+                    </span>
                     {reached ? (
-                      <span className="font-medium text-success">You did it. This goal is fully saved.</span>
+                      <span className="text-success">Fully saved</span>
                     ) : (
-                      <>
-                        Save about{' '}
-                        <span className="tabular font-medium text-foreground">{formatCurrency(suggestedMonthly)}</span>{' '}
-                        a month to get there
-                      </>
+                      <span>
+                        About <Money amount={suggestedMonthly} size="sm" decimals={false} tone="brand" /> a month
+                        <span className="text-subtle">
+                          {' '}
+                          · <Money amount={remaining} size="sm" decimals={false} tone="muted" className="text-subtle" /> to go
+                        </span>
+                      </span>
                     )}
-                  </p>
-                </CardContent>
+                  </div>
+                </div>
 
-                <CardFooter>
-                  <Button variant="outline" className="w-full" onClick={() => setSelectedGoal(goal)}>
+                <div className="col-span-2 flex items-center justify-end gap-1 sm:col-span-1">
+                  <Button variant="ghost" size="sm" onClick={() => setSelectedGoal(goal)}>
                     <Plus />
                     Add money
                   </Button>
-                </CardFooter>
-              </Card>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => setDeletingId(goal.id)}
+                    aria-label={`Delete ${goal.name}`}
+                    title="Remove goal"
+                    className="hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
+                  >
+                    <Trash2 />
+                  </Button>
+                </div>
+              </li>
             );
           })}
-        </div>
+        </ul>
       )}
 
       {/* Add money dialog */}

@@ -3,6 +3,7 @@
  *
  *   POST /v1/entry       chat message -> several transactions + questions for missing amounts
  *   POST /v1/receipt     photo of a bill, receipt or item -> transactions (vision)
+ *   POST /v1/jobs/statement  start a background statement import (Workflow) for an import_jobs row
  *   POST /v1/statement   bank statement (PDF/Excel/CSV) -> transactions
  *   POST /v1/extract     natural-language expense -> structured transaction (JSON mode)
  *   POST /v1/coach       money-coach chat grounded in figures the app computed (SSE stream)
@@ -13,6 +14,11 @@
  * `Authorization: Bearer <API_SECRET>`; the caller's user id or IP comes in
  * `X-Client-Id` and is used as the rate-limit key.
  */
+
+import { NonRetryableError } from 'cloudflare:workflows';
+import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
+import { findDuplicates } from '../../../src/lib/ai/dedupe';
+import { parseStatementText, tidyPayee, type ParsedStatementRow } from '../../../src/lib/ai/statement-parser';
 
 declare global {
 	interface Env {
@@ -749,7 +755,11 @@ const MIME_BY_EXT: Record<string, string> = {
 };
 
 async function statementText(req: StatementRequest, env: Env): Promise<string> {
-	const bytes = Uint8Array.from(atob(req.file), (c) => c.charCodeAt(0));
+	return statementTextFromBytes(Uint8Array.from(atob(req.file), (c) => c.charCodeAt(0)), req.filename, env);
+}
+
+async function statementTextFromBytes(bytes: Uint8Array, filename: string, env: Env): Promise<string> {
+	const req = { filename };
 	const ext = req.filename.toLowerCase().split('.').pop() ?? '';
 	if (ext === 'csv') return csvToLines(new TextDecoder().decode(bytes));
 	if (ext === 'txt') return new TextDecoder().decode(bytes);
@@ -771,6 +781,229 @@ async function statementText(req: StatementRequest, env: Env): Promise<string> {
 	return doc.data;
 }
 
+type StatementRow = EntryItem & { date: string; time?: string | null; payee?: string };
+
+const INTERNAL_TRANSFER =
+	/bill payment of .*credit ?card|upi lite top.?up|credit ?card (bill|payment)|\bcc (payment|autopay|bill)|card (bill|autopay)|own a\/?c|self transfer|transfer to own/i;
+
+/** Reads one part of a statement. Throws on model errors so callers can retry. */
+async function extractStatementChunk(
+	env: Env,
+	model: string,
+	system: string,
+	schema: ReturnType<typeof statementSchema>,
+	chunk: string
+): Promise<StatementRow[]> {
+	const out = await env.AI.run(model as typeof env.ENTRY_MODEL, {
+		messages: [
+			{ role: 'system', content: system },
+			{ role: 'user', content: chunk },
+		],
+		response_format: { type: 'json_schema', json_schema: schema },
+		temperature: 0,
+		max_tokens: 6000,
+	});
+	const data = structuredOutput(out) as { items?: StatementRow[] } | null;
+	// Keep only rows whose amount really appears in this part of the statement.
+	const mentions = moneyMentions(chunk).map((m) => m.value);
+	return (data?.items ?? []).filter(
+		(it) =>
+			typeof it.amount === 'number' &&
+			it.amount > 0 &&
+			/^\d{4}-\d{2}-\d{2}$/.test(it.date) &&
+			mentions.some((v) => Math.abs(v - (it.amount as number)) < 0.01)
+	);
+}
+
+/** Drops own-account transfers / card bill payments (they double count) and normalises fields. */
+function cleanStatementRows(rows: StatementRow[]): StatementRow[] {
+	return rows
+		.filter((it) => !INTERNAL_TRANSFER.test(`${it.description} ${it.merchant ?? ''}`))
+		.map((it) => ({ ...it, options: Array.isArray(it.options) ? it.options : [], needs: it.needs === 'category' ? 'category' : null }));
+}
+
+/**
+ * Splits statement text into readable parts, page by page when the converter
+ * marked pages ("### Page 3"), and further splits very long pages.
+ */
+function splitIntoPages(text: string): { label: string; text: string }[] {
+	const marked = text.split(/^#{1,4}\s*Page\s+(\d+)\s*$/im);
+	const pages: { label: string; text: string }[] = [];
+	if (marked.length > 2) {
+		for (let i = 1; i < marked.length; i += 2) {
+			const parts = splitIntoChunks(marked[i + 1] ?? '');
+			parts.forEach((part, j) =>
+				pages.push({ label: parts.length > 1 ? `page ${marked[i]} (part ${j + 1})` : `page ${marked[i]}`, text: part })
+			);
+		}
+	} else {
+		splitIntoChunks(text).forEach((part, i, all) => pages.push({ label: all.length > 1 ? `part ${i + 1}` : 'the statement', text: part }));
+	}
+	return pages.filter((p) => p.text.trim().length > 20);
+}
+
+// ---------------------------------------------------------------------------
+// Rule-based statements: rows come from the file itself (exact amounts and
+// direction); the model only sorts payee names into categories, and only
+// people / unclear payees with real money involved become questions.
+// ---------------------------------------------------------------------------
+
+type Essentiality = EntryItem['essentiality'];
+interface PayeeGroup {
+	key: string;
+	payee: string;
+	type: 'expense' | 'income';
+	note: string | null;
+	count: number;
+	total: number;
+}
+interface PayeeVerdict {
+	kind: 'business' | 'person' | 'unclear';
+	category: string;
+	essentiality: Essentiality;
+	confidence: number;
+	options: string[];
+	/** From the user's own earlier answers; never asked again. */
+	learned?: boolean;
+}
+
+const PAYEE_BATCH = 50;
+/** Smaller amounts to people (tea stalls, auto drivers on personal UPI) aren't worth a question. */
+const ASK_MIN_TOTAL = 500;
+
+function payeeKey(type: string, payee: string): string {
+	return `${type}|${payee.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()}`;
+}
+
+function groupPayees(rows: ParsedStatementRow[]): PayeeGroup[] {
+	const groups = new Map<string, PayeeGroup>();
+	for (const r of rows) {
+		if (r.internal) continue;
+		const key = payeeKey(r.transaction_type, r.payee);
+		const g = groups.get(key) ?? { key, payee: r.payee, type: r.transaction_type, note: r.note, count: 0, total: 0 };
+		g.count++;
+		g.total += r.amount;
+		g.note ??= r.note;
+		groups.set(key, g);
+	}
+	return [...groups.values()].sort((a, b) => b.total - a.total);
+}
+
+function payeeSchema(categories: { expense: string[]; income: string[] }) {
+	return {
+		type: 'object',
+		properties: {
+			items: {
+				type: 'array',
+				items: {
+					type: 'object',
+					properties: {
+						i: { type: 'integer', description: 'The payee number' },
+						kind: { type: 'string', enum: ['business', 'person', 'unclear'] },
+						category: { type: 'string', enum: [...categories.expense, ...categories.income] },
+						essentiality: { type: 'string', enum: ['essential', 'optimizable', 'discretionary'] },
+						confidence: { type: 'number', minimum: 0, maximum: 1 },
+						options: { type: 'array', maxItems: 4, items: { type: 'string' } },
+					},
+					required: ['i', 'kind', 'category', 'essentiality', 'confidence', 'options'],
+				},
+			},
+		},
+		required: ['items'],
+	};
+}
+
+function payeePrompt(categories: { expense: string[]; income: string[] }, profile: EntryProfile | undefined): string {
+	return `You sort the payees of an Indian bank / UPI statement into categories. Each line is one payee: "N. paid to <name>" or "N. received from <name>", sometimes with a note, the number of payments and the total.
+${profileLines(profile)}
+Expense categories: ${categories.expense.join(', ')}.
+Income categories: ${categories.income.join(', ')}.
+
+For every numbered payee return one item with the same number i:
+- kind: "business" for shops, apps, brands, companies, billers and merchants (Zomato, Blinkit, Airtel, "Mukul kirana Store", "Milan enterprises", "Sharma Medicos"); "person" for an individual's name ("Neetu Singh", "Prince Kumar"); "unclear" otherwise.
+- category: for "paid to" use an expense category, for "received from" an income category. Businesses by what they sell: kirana / general / dairy / vegetable stores, Blinkit, Zepto, BigBasket -> Groceries; Zomato, Swiggy, restaurants, cafes, sweets -> Food & Dining; Uber, Ola, Rapido, fuel, metro, IRCTC, FASTag -> Transportation; mobile / DTH recharge, electricity, gas, broadband -> Utilities; chemists, hospitals, labs -> Healthcare; Amazon, Flipkart, Myntra, clothing, electronics -> Shopping; salons -> Personal Care; Netflix, Spotify, Google Play -> Subscriptions; loan EMIs, insurance -> Financial Obligations. Refunds / cashback received from a business -> Other Income. People: your best guess, usually Miscellaneous (paid) or Other Income (received); use the note when it says what it was for.
+- essentiality: essential (groceries, bills, rent, health, transport to work), optimizable (could be cheaper), discretionary (wants). For income use "essential".
+- confidence: 0-1, how sure you are of the category. People without a helpful note: 0.3 or less.
+- options: for people and unclear payees, 3-4 likely categories of the right type, copied exactly from the lists. Otherwise [].`;
+}
+
+async function sortPayees(
+	env: Env,
+	model: string,
+	groups: PayeeGroup[],
+	categories: { expense: string[]; income: string[] },
+	profile: EntryProfile | undefined
+): Promise<Map<string, PayeeVerdict>> {
+	const lines = groups.map(
+		(g, i) =>
+			`${i + 1}. ${g.type === 'income' ? 'received from' : 'paid to'} ${g.payee}${g.note ? ` (note: ${g.note})` : ''} - ${g.count} ${g.count === 1 ? 'payment' : 'payments'}, Rs ${Math.round(g.total)}`
+	);
+	const out = await env.AI.run(model as typeof env.ENTRY_MODEL, {
+		messages: [
+			{ role: 'system', content: payeePrompt(categories, profile) },
+			{ role: 'user', content: lines.join('\n') },
+		],
+		response_format: { type: 'json_schema', json_schema: payeeSchema(categories) },
+		temperature: 0,
+		max_tokens: 6000,
+	});
+	const data = structuredOutput(out) as { items?: (PayeeVerdict & { i: number })[] } | null;
+	const verdicts = new Map<string, PayeeVerdict>();
+	for (const v of data?.items ?? []) {
+		const g = groups[v.i - 1];
+		if (!g) continue;
+		const allowed = g.type === 'income' ? categories.income : categories.expense;
+		const category = allowed.find((c) => c.toLowerCase() === String(v.category).toLowerCase());
+		verdicts.set(g.key, {
+			kind: v.kind === 'business' || v.kind === 'person' ? v.kind : 'unclear',
+			category: category ?? (g.type === 'income' ? 'Other Income' : 'Miscellaneous'),
+			essentiality: g.type === 'income' ? 'essential' : (['essential', 'optimizable', 'discretionary'].includes(v.essentiality) ? v.essentiality : 'optimizable'),
+			confidence: category ? Math.min(1, Math.max(0, Number(v.confidence) || 0)) : 0,
+			options: (Array.isArray(v.options) ? v.options : []).filter((o) => allowed.includes(o)).slice(0, 4),
+		});
+	}
+	return verdicts;
+}
+
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const inr = (n: number) => `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
+/** Turns parsed rows + payee verdicts into rows to save; questions are written here, not by the model. */
+function rowsFromParsed(parsed: ParsedStatementRow[], groups: PayeeGroup[], verdicts: Map<string, PayeeVerdict>): StatementRow[] {
+	const byKey = new Map(groups.map((g) => [g.key, g]));
+	return parsed
+		.filter((r) => !r.internal)
+		.map((r) => {
+			const key = payeeKey(r.transaction_type, r.payee);
+			const group = byKey.get(key)!;
+			const fallback = r.transaction_type === 'income' ? 'Other Income' : 'Miscellaneous';
+			const v = verdicts.get(key) ?? { kind: 'unclear', category: fallback, essentiality: 'optimizable', confidence: 0, options: [] };
+			const ask = !v.learned && (v.kind !== 'business' || v.confidence < 0.5) && group.total >= ASK_MIN_TOTAL;
+			const [, m, d] = r.date.split('-').map(Number);
+			const options = v.options.length ? v.options : [v.category];
+			return {
+				ref: null,
+				date: r.date,
+				time: r.time,
+				payee: r.payee,
+				transaction_type: r.transaction_type,
+				amount: r.amount,
+				description: r.note ? `${r.payee} · ${r.note}`.slice(0, 120) : r.payee,
+				merchant: v.kind === 'business' ? r.payee : null,
+				category: v.category,
+				purchase_date: r.date,
+				payment_method: r.payment_method,
+				essentiality: r.transaction_type === 'income' ? 'essential' : v.essentiality,
+				confidence: v.confidence,
+				needs: ask ? 'category' : null,
+				question: ask
+					? `What was the ${inr(r.amount)} ${r.transaction_type === 'income' ? 'from' : 'to'} ${r.payee} on ${d} ${SHORT_MONTHS[m - 1]} for?`
+					: null,
+				options: ask ? options : [],
+			} satisfies StatementRow;
+		});
+}
+
 async function handleStatement(request: Request, env: Env): Promise<Response> {
 	const model =
 		(env.ALLOW_MODEL_OVERRIDE === 'true' && request.headers.get('x-model')) || env.ENTRY_MODEL;
@@ -786,55 +1019,51 @@ async function handleStatement(request: Request, env: Env): Promise<Response> {
 	}
 
 	const text = normalizeDigits(await statementText(body, env));
-	if (env.ALLOW_MODEL_OVERRIDE === 'true' && request.headers.get('x-debug-text')) return new Response(text);
+	const parsed = parseStatementText(text);
+	if (parsed) {
+		const groups = groupPayees(parsed);
+		const verdicts = new Map<string, PayeeVerdict>();
+		for (let i = 0; i < groups.length; i += PAYEE_BATCH * 4) {
+			const batches = await Promise.all(
+				[0, 1, 2, 3]
+					.map((j) => groups.slice(i + j * PAYEE_BATCH, i + (j + 1) * PAYEE_BATCH))
+					.filter((b) => b.length)
+					.map((b) =>
+						sortPayees(env, model, b, body.categories, body.profile).catch((err) => {
+							console.error('Payee batch failed', err);
+							return new Map<string, PayeeVerdict>();
+						})
+					)
+			);
+			for (const b of batches) for (const [k, v] of b) verdicts.set(k, v);
+		}
+		return json({
+			data: { items: rowsFromParsed(parsed, groups, verdicts) },
+			stats: { characters: text.length, rows: parsed.length, mode: 'rules', truncated: false },
+			model,
+		});
+	}
 	const chunks = splitIntoChunks(text).slice(0, MAX_STATEMENT_CHUNKS);
 	if (!chunks.length) throw new HttpError(422, "That file doesn't seem to contain any text.");
 
 	const system = statementPrompt(body);
 	const schema = statementSchema(body.categories);
-	const results: { items: (EntryItem & { date: string })[] }[] = [];
+	const rows: StatementRow[] = [];
 	// A few chunks at a time keeps latency down without tripping model rate limits.
 	for (let i = 0; i < chunks.length; i += 4) {
 		const batch = await Promise.all(
-			chunks.slice(i, i + 4).map(async (chunk) => {
-				try {
-					const out = await env.AI.run(model as typeof env.ENTRY_MODEL, {
-						messages: [
-							{ role: 'system', content: system },
-							{ role: 'user', content: chunk },
-						],
-						response_format: { type: 'json_schema', json_schema: schema },
-						temperature: 0,
-						max_tokens: 6000,
-					});
-					const data = structuredOutput(out) as { items?: (EntryItem & { date: string })[] } | null;
-					// Keep only rows whose amount really appears in this part of the statement.
-					const mentions = moneyMentions(chunk).map((m) => m.value);
-					const items = (data?.items ?? []).filter(
-						(it) =>
-							typeof it.amount === 'number' &&
-							it.amount > 0 &&
-							/^\d{4}-\d{2}-\d{2}$/.test(it.date) &&
-							mentions.some((v) => Math.abs(v - (it.amount as number)) < 0.01)
-					);
-					return { items };
-				} catch (err) {
+			chunks.slice(i, i + 4).map((chunk) =>
+				extractStatementChunk(env, model, system, schema, chunk).catch((err) => {
 					console.error('Statement chunk failed', err);
-					return { items: [] };
-				}
-			})
+					return [] as StatementRow[];
+				})
+			)
 		);
-		results.push(...batch);
+		rows.push(...batch.flat());
 	}
 
-	// Belt and braces for the "skip" rule: these would double count spending.
-	const internal = /credit ?card (bill|payment)|\bcc (payment|autopay|bill)|card (bill|autopay)|own a\/?c|self transfer|transfer to own/i;
-	const items = results
-		.flatMap((r) => r.items)
-		.filter((it) => !internal.test(`${it.description} ${it.merchant ?? ''}`))
-		.map((it) => ({ ...it, options: Array.isArray(it.options) ? it.options : [], needs: it.needs === 'category' ? 'category' : null }));
 	return json({
-		data: { items },
+		data: { items: cleanStatementRows(rows) },
 		stats: { characters: text.length, chunks: chunks.length, truncated: splitIntoChunks(text).length > MAX_STATEMENT_CHUNKS },
 		model,
 	});
@@ -992,6 +1221,8 @@ export default {
 					return await handleStatement(request, env);
 				case '/v1/receipt':
 					return await handleReceipt(request, env);
+				case '/v1/jobs/statement':
+					return await handleStartStatementJob(request, env);
 				case '/v1/extract':
 					return await handleExtract(request, env);
 				case '/v1/coach':
@@ -1008,3 +1239,277 @@ export default {
 		}
 	},
 } satisfies ExportedHandler<Env>;
+
+// ---------------------------------------------------------------------------
+// Background statement imports: a Cloudflare Workflow per import_jobs row.
+// The app stores the file in R2 and the job in D1, then calls /v1/jobs/statement.
+// Each step is durable and retried; progress and a readable log go to D1 so the
+// chat can show what's happening, and the import finishes even if the user leaves.
+// ---------------------------------------------------------------------------
+
+type ImportParams = { jobId: string };
+type CategoryRow = { id: string; name: string; category_type: 'expense' | 'income' };
+
+const MAX_JOB_PAGES = 60;
+
+async function logJob(env: Env, jobId: string, text: string, fields: Record<string, string | number | null> = {}) {
+	const keys = Object.keys(fields);
+	await env.DB.prepare(
+		`UPDATE import_jobs SET ${keys.map((k) => `${k} = ?, `).join('')}
+		   events = json_insert(events, '$[#]', json_object('at', ?, 'text', ?)),
+		   updated_at = ?
+		 WHERE id = ?`
+	)
+		.bind(...keys.map((k) => fields[k]), new Date().toISOString(), text, new Date().toISOString(), jobId)
+		.run();
+}
+
+async function handleStartStatementJob(request: Request, env: Env): Promise<Response> {
+	const { jobId } = await readJson<{ jobId?: string }>(request);
+	if (!jobId || typeof jobId !== 'string') throw new HttpError(400, 'jobId is required');
+	const job = await env.DB.prepare('SELECT id FROM import_jobs WHERE id = ?').bind(jobId).first();
+	if (!job) throw new HttpError(404, 'Job not found');
+	await env.STATEMENT_IMPORT.create({ id: jobId, params: { jobId } });
+	return json({ ok: true });
+}
+
+export class StatementImportWorkflow extends WorkflowEntrypoint<Env, ImportParams> {
+	async run(event: WorkflowEvent<ImportParams>, step: WorkflowStep) {
+		const { jobId } = event.payload;
+		const env = this.env;
+		try {
+			const setup = await step.do('load job', async () => {
+				const job = await env.DB.prepare(
+					`SELECT j.user_id, j.filename, j.r2_key, u.user_type, u.monthly_income, u.main_goals
+					 FROM import_jobs j JOIN users u ON u.id = j.user_id WHERE j.id = ?`
+				)
+					.bind(jobId)
+					.first<{ user_id: string; filename: string; r2_key: string; user_type: string | null; monthly_income: number | null; main_goals: string }>();
+				if (!job) throw new Error('Import job not found');
+				const { results } = await env.DB.prepare(
+					'SELECT id, name, category_type FROM categories WHERE user_id IS NULL OR user_id = ? ORDER BY is_system DESC, rowid'
+				)
+					.bind(job.user_id)
+					.all<CategoryRow>();
+				// What this user told us before about a payee, so we don't ask twice.
+				const { results: answered } = await env.DB.prepare(
+					`SELECT t.transaction_type, t.description, t.merchant, t.essentiality, t.ai_extraction, c.name AS category
+					 FROM transactions t JOIN categories c ON c.id = t.category_id
+					 WHERE t.user_id = ? AND t.user_corrected_classification = 1 ORDER BY t.rowid DESC LIMIT 2000`
+				)
+					.bind(job.user_id)
+					.all<{ transaction_type: string; description: string; merchant: string | null; essentiality: Essentiality; ai_extraction: string | null; category: string }>();
+				const learned: Record<string, { category: string; essentiality: Essentiality }> = {};
+				for (const a of answered) {
+					let payee: string | undefined;
+					try {
+						payee = (JSON.parse(a.ai_extraction ?? '{}') as { payee?: string }).payee;
+					} catch {}
+					const key = payeeKey(a.transaction_type, payee ?? tidyPayee(a.merchant || a.description));
+					learned[key] ??= { category: a.category, essentiality: a.essentiality };
+				}
+				await logJob(env, jobId, `Started reading ${job.filename}`, { status: 'reading' });
+				return { ...job, categories: results, learned };
+			});
+
+			const file = await step.do('read file', { retries: { limit: 2, delay: '5 seconds' } }, async () => {
+				const object = await env.STATEMENTS.get(setup.r2_key);
+				if (!object) throw new Error('The uploaded file is missing');
+				const bytes = new Uint8Array(await object.arrayBuffer());
+				let text: string;
+				try {
+					text = normalizeDigits(await statementTextFromBytes(bytes, setup.filename, env));
+				} catch (err) {
+					// Password-protected / unreadable files won't get better with retries.
+					throw new NonRetryableError(err instanceof Error ? err.message : 'Could not read the file');
+				}
+				const pageCount = splitIntoPages(text).length;
+				const parsed = parseStatementText(text);
+				if (parsed) {
+					const moved = parsed.filter((r) => r.internal).length;
+					await logJob(
+						env,
+						jobId,
+						`Found ${parsed.length} transactions on ${pageCount} ${pageCount === 1 ? 'page' : 'pages'}, read exactly from the file${moved ? ` (${moved} are card bills or wallet top-ups, which I'll leave out so nothing counts twice)` : ''}`,
+						{ status: 'extracting' }
+					);
+					return { parsed, pages: [] as { label: string; text: string }[] };
+				}
+				const all = splitIntoPages(text);
+				const pages = all.slice(0, MAX_JOB_PAGES);
+				await logJob(
+					env,
+					jobId,
+					`Converted to text: ${pages.length} ${pages.length === 1 ? 'part' : 'parts'} to read${all.length > pages.length ? ` (first ${MAX_JOB_PAGES} only)` : ''}`,
+					{ status: 'extracting', total_pages: pages.length }
+				);
+				return { parsed: null, pages };
+			});
+			const { parsed, pages } = file;
+			if (!parsed && pages.length === 0) throw new NonRetryableError("That file doesn't seem to contain any text.");
+
+			const categoryNames = {
+				expense: setup.categories.filter((c) => c.category_type === 'expense').map((c) => c.name),
+				income: setup.categories.filter((c) => c.category_type === 'income').map((c) => c.name),
+			};
+			const today = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+			const profile: EntryProfile = {
+				userType: setup.user_type,
+				monthlyIncome: setup.monthly_income,
+				goals: JSON.parse(setup.main_goals || '[]'),
+			};
+			const system = statementPrompt({ file: '', filename: setup.filename, today, categories: categoryNames, profile });
+			const schema = statementSchema(categoryNames);
+
+			const rows: StatementRow[] = [];
+			if (parsed) {
+				const groups = groupPayees(parsed);
+				const verdicts = new Map<string, PayeeVerdict>();
+				for (const g of groups) {
+					const known = setup.learned[g.key];
+					if (known) verdicts.set(g.key, { kind: 'person', category: known.category, essentiality: known.essentiality, confidence: 1, options: [], learned: true });
+				}
+				const toSort = groups.filter((g) => !verdicts.has(g.key));
+				const batches = Math.ceil(toSort.length / PAYEE_BATCH);
+				if (verdicts.size) await logJob(env, jobId, `Used your earlier answers for ${verdicts.size} ${verdicts.size === 1 ? 'payee' : 'payees'}`);
+				await step.do('plan payees', async () => {
+					await logJob(env, jobId, `Sorting ${toSort.length} payees into categories`, { total_pages: batches, pages_done: 0 });
+				});
+				for (let b = 0; b < batches; b++) {
+					const batch = toSort.slice(b * PAYEE_BATCH, (b + 1) * PAYEE_BATCH);
+					const sorted = await step.do(
+						`sort payees ${b + 1}`,
+						{ retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' }, timeout: '3 minutes' },
+						async () => {
+							const result = await sortPayees(env, env.ENTRY_MODEL, batch, categoryNames, profile);
+							const examples = batch
+								.filter((g) => result.get(g.key)?.kind === 'business')
+								.slice(0, 3)
+								.map((g) => `${g.payee} → ${result.get(g.key)!.category}`);
+							const people = batch.filter((g) => result.get(g.key)?.kind === 'person').length;
+							await logJob(
+								env,
+								jobId,
+								`Sorted payees ${b * PAYEE_BATCH + 1}–${b * PAYEE_BATCH + batch.length} of ${toSort.length}${examples.length ? `: ${examples.join(', ')}` : ''}${people ? ` · ${people} ${people === 1 ? 'is a person' : 'are people'}` : ''}`,
+								{ pages_done: b + 1 }
+							);
+							return [...result.entries()];
+						}
+					);
+					for (const [k, v] of sorted) verdicts.set(k, v);
+				}
+				rows.push(...rowsFromParsed(parsed, groups, verdicts));
+			}
+			for (let i = 0; i < pages.length; i++) {
+				const found = await step.do(
+					`read ${pages[i].label}`,
+					{ retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' }, timeout: '3 minutes' },
+					async () => {
+						const items = cleanStatementRows(await extractStatementChunk(env, env.ENTRY_MODEL, system, schema, pages[i].text));
+						const spent = items.filter((r) => r.transaction_type === 'expense').length;
+						const earned = items.length - spent;
+						await logJob(
+							env,
+							jobId,
+							`Read ${pages[i].label} of ${pages.length}: ${items.length} ${items.length === 1 ? 'transaction' : 'transactions'}${items.length ? ` (${spent} spent, ${earned} received)` : ''}`,
+							{ pages_done: i + 1 }
+						);
+						return items;
+					}
+				);
+				rows.push(...found);
+			}
+
+			await step.do('check duplicates and save', { retries: { limit: 3, delay: '5 seconds' } }, async () => {
+				if (rows.length === 0) {
+					await logJob(env, jobId, 'No transactions found in this file.', { status: 'done', found: 0 });
+					return;
+				}
+				const dates = rows.map((r) => r.date).sort();
+				const shift = (d: string, days: number) => {
+					const [y, m, dd] = d.split('-').map(Number);
+					return new Date(Date.UTC(y, m - 1, dd + days)).toISOString().slice(0, 10);
+				};
+				const { results: existing } = await env.DB.prepare(
+					`SELECT t.id, t.transaction_type, t.amount, t.purchase_date, t.description, t.merchant, t.category_id
+					 FROM transactions t WHERE t.user_id = ? AND t.purchase_date BETWEEN ? AND ? AND (t.import_job_id IS NULL OR t.import_job_id != ?)`
+				)
+					.bind(setup.user_id, shift(dates[0], -3), shift(dates[dates.length - 1], 3), jobId)
+					.all<{ id: string; transaction_type: 'expense' | 'income'; amount: number; purchase_date: string; description: string; merchant: string | null; category_id: string }>();
+				await logJob(env, jobId, `Checking ${rows.length} transactions against ${existing.length} you've already recorded around those dates`, {
+					status: 'saving',
+					found: rows.length,
+				});
+
+				const categoryFor = (name: string, type: 'expense' | 'income') => {
+					const ofType = setup.categories.filter((c) => c.category_type === type);
+					return (
+						ofType.find((c) => c.name.toLowerCase() === name.toLowerCase()) ??
+						ofType.find((c) => c.id === (type === 'income' ? 'cat-other-inc' : 'cat-misc')) ??
+						ofType[0]
+					);
+				};
+				const incoming = rows.map((r) => {
+					const category = categoryFor(r.category, r.transaction_type);
+					return { ...r, purchase_date: r.date, category_id: category.id, category: category.name };
+				});
+				const { fresh, duplicates } = findDuplicates(incoming, existing);
+
+				const insert = env.DB.prepare(
+					`INSERT INTO transactions (id, user_id, category_id, transaction_type, amount, currency, description, merchant,
+					   payment_method, purchase_date, purchase_time, occurred_at, entry_method, original_input, ai_extraction, essentiality,
+					   classification_confidence, review_status, notes, import_job_id)
+					 VALUES (?, ?, ?, ?, ?, 'INR', ?, ?, ?, ?, ?, ?, 'ai_text', ?, ?, ?, ?, ?, ?, ?)`
+				);
+				const statements = fresh.map((r) =>
+					insert.bind(
+						crypto.randomUUID(),
+						setup.user_id,
+						r.category_id,
+						r.transaction_type,
+						r.amount,
+						r.description.slice(0, 200),
+						r.merchant,
+						r.payment_method,
+						r.purchase_date,
+						r.time ?? null,
+						`${r.purchase_date}T${r.time ?? '12:00'}:00`,
+						`Statement: ${setup.filename}`.slice(0, 1000),
+						JSON.stringify({ question: r.question, options: r.options, needs: r.needs, payee: r.payee ?? null }).slice(0, 2000),
+						r.transaction_type === 'income' ? 'essential' : r.essentiality,
+						r.confidence ?? null,
+						r.needs === 'category' ? 'pending_review' : 'confirmed',
+						null,
+						jobId
+					)
+				);
+				for (let i = 0; i < statements.length; i += 50) await env.DB.batch(statements.slice(i, i + 50));
+
+				const needsReview = fresh.filter((r) => r.needs === 'category').length;
+				const skippedRows = duplicates.map(({ item, match }) => ({
+					description: item.description,
+					amount: item.amount,
+					date: item.purchase_date,
+					matched: match.description,
+				}));
+				await logJob(
+					env,
+					jobId,
+					`Done: saved ${fresh.length}, skipped ${duplicates.length} already recorded${needsReview ? `, ${needsReview} need a quick answer` : ''}.`,
+					{
+						status: 'done',
+						added: fresh.length,
+						skipped: duplicates.length,
+						needs_review: needsReview,
+						skipped_rows: JSON.stringify(skippedRows),
+					}
+				);
+			});
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Something went wrong';
+			await step.do('mark failed', async () => {
+				await logJob(env, jobId, `Stopped: ${message}`, { status: 'failed', error: message.slice(0, 500) });
+			});
+		}
+	}
+}

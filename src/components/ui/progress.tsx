@@ -12,12 +12,12 @@ function Progress({
 }) {
   const pct = Math.max(0, Math.min(100, value));
   return (
-    <div className={cn('h-1.5 w-full overflow-hidden rounded-full bg-muted', className)}>
+    <div className={cn('h-1.5 w-full overflow-hidden rounded-full bg-foreground/[0.07]', className)}>
       <div
         className={cn(
           'h-full rounded-full transition-[width] duration-500 ease-out',
           {
-            default: 'bg-primary',
+            default: 'bg-brand',
             muted: 'bg-chart-3',
             success: 'bg-success',
             warning: 'bg-warning',

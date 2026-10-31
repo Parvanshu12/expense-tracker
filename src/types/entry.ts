@@ -47,6 +47,24 @@ export interface StatementResponse {
   truncated: boolean;
 }
 
+/** A background statement import (one Cloudflare Workflow run). */
+export interface ImportJob {
+  id: string;
+  filename: string;
+  status: 'queued' | 'reading' | 'extracting' | 'saving' | 'done' | 'failed' | 'undone';
+  total_pages: number;
+  pages_done: number;
+  found: number;
+  added: number;
+  skipped: number;
+  needs_review: number;
+  events: { at: string; text: string }[];
+  skipped_rows: { description: string; amount: number; date: string; matched: string }[];
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ReceiptResponse {
   items: EntryItem[];
   reply: string;

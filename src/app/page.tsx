@@ -1,99 +1,87 @@
 'use client';
 
 import Link from 'next/link';
-import {
-  ArrowRight,
-  Bell,
-  Mic,
-  MessageSquare,
-  Scale,
-  Target,
-  TrendingUp,
-  type LucideIcon,
-} from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { buttonVariants } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Money } from '@/components/ui/money';
 import { Logo } from '@/components/layout/logo';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { enterSandbox } from '@/lib/auth-client';
 import { PURCHASE_KINDS, type PurchaseKind } from '@/lib/categories/kinds';
 import { cn } from '@/lib/utils';
 
-// Each feature gets a small tinted icon tile; the colour hints at what it is about.
-const FEATURES: { icon: LucideIcon; title: string; body: string; tone: string }[] = [
+const FEATURES: { title: string; body: string; example?: string }[] = [
   {
-    icon: Mic,
-    title: 'Add an expense in a few words',
-    body: 'Type or say "850 for groceries at DMart". We fill in the amount, shop and category for you. Hinglish works too.',
-    tone: 'bg-primary/10 text-primary',
+    title: 'Tell it like you would tell a friend',
+    body: 'Type or say what you spent, in English or Hinglish. The amount, shop, category and day are filled in for you to check.',
+    example: '“kal auto mein 120 diye”',
   },
   {
-    icon: Scale,
-    title: 'See what you really needed',
-    body: 'Each expense is sorted as essential, could trim or optional, so you can spot where there is room to save.',
-    tone: 'bg-essential/12 text-essential',
+    title: 'Take a photo of the bill',
+    body: 'Snap a receipt or a printed bill. SpendWise reads the total and the shop, and you save it in one tap.',
   },
   {
-    icon: Bell,
-    title: 'A friendly nudge before you overspend',
-    body: 'Set a limit for the month, or for one thing like eating out. We let you know when you are getting close.',
-    tone: 'bg-warning/14 text-warning',
+    title: 'Bring in your bank statement',
+    body: 'Upload a statement and each line comes in sorted. Anything you already added is skipped, so nothing is counted twice.',
   },
   {
-    icon: MessageSquare,
-    title: 'Ask questions in plain words',
-    body: 'Ask "where did my money go?" or "how can I save more?" and get answers based on your own spending.',
-    tone: 'bg-info/12 text-info',
+    title: 'A heads-up before you overspend',
+    body: 'Set a limit for the month, or for one thing like eating out. You hear about it at 75%, at 90% and if you go over.',
   },
   {
-    icon: Target,
-    title: 'Save for the things you want',
-    body: 'Pick something to save for and a date. We show how much to put aside each month and how close you are.',
-    tone: 'bg-success/12 text-success',
+    title: 'A coach that knows your situation',
+    body: 'Student, salaried, freelancer or retired: advice fits your life, and every figure it quotes comes from your own spending.',
+    example: '“Where did most of my money go?”',
   },
   {
-    icon: TrendingUp,
-    title: 'Plan for later',
-    body: 'See how a small amount saved every month could grow over 5, 10 or 20 years.',
-    tone: 'bg-primary/10 text-primary',
+    title: 'Your month, day by day',
+    body: 'A timeline of every day: what you spent, where, and how it adds up across the weeks.',
   },
 ];
 
 const STEPS = [
-  {
-    title: 'Add what you spend',
-    body: 'Type a short line or say it out loud. It takes a few seconds.',
-  },
-  {
-    title: 'Look at your month',
-    body: 'See where your money went, what you needed, and how your budgets are doing.',
-  },
-  {
-    title: 'Make small changes',
-    body: 'Cut back where it is easy, set a goal, and watch your savings grow.',
-  },
+  { title: 'Add what you spend', body: 'A short line, a photo, or a statement. It takes a few seconds.' },
+  { title: 'See what is left', body: 'Home shows what you can still spend this month, and about how much a day.' },
+  { title: 'Adjust as you go', body: 'Trim where it is easy, set a goal, and ask the coach when something looks off.' },
 ];
 
-// Daily spend for the preview chart: [essential, could trim, optional] as % of the tallest day.
-const BARS: [number, number, number][] = [
-  [38, 8, 12], [30, 6, 22], [52, 10, 8], [24, 12, 30], [44, 4, 16], [62, 8, 20], [28, 14, 10],
-  [40, 6, 26], [34, 10, 14], [56, 4, 18], [26, 8, 34], [48, 12, 12], [36, 6, 22], [58, 10, 28],
+/* ---------- Static data for the product shot ---------- */
+
+const BUDGET = 42000;
+const SPENT = 40335;
+const DAYS_IN_MONTH = 31;
+const TODAY = 29;
+// Spending per day for the first 29 days of the month (shape only; scaled to SPENT below).
+const DAILY = [
+  820, 1450, 640, 2100, 980, 1310, 760, 1890, 1120, 540, 2380, 1260, 900, 1670, 1040, 720, 1980, 1150, 830, 1560, 1240,
+  690, 2210, 1380, 1010, 1720, 880, 1490, 1555,
 ];
 
-const TRANSACTIONS: {
-  name: string;
-  meta: string;
-  amount: string;
-  kind: 'essential' | 'optimizable' | 'discretionary';
-  purchase: PurchaseKind;
-}[] = [
-  { name: 'Groceries', meta: 'DMart · Today', amount: '₹1,240', kind: 'essential', purchase: 'groceries' },
-  { name: 'Dinner order', meta: 'Swiggy · Yesterday', amount: '₹480', kind: 'discretionary', purchase: 'food' },
-  { name: 'Metro card', meta: 'Transport · Oct 28', amount: '₹500', kind: 'essential', purchase: 'transport' },
-  { name: 'Mobile plan', meta: 'Jio · Oct 27', amount: '₹749', kind: 'optimizable', purchase: 'subscriptions' },
+const W = 320;
+const H = 120;
+const sx = (day: number) => 2 + ((day - 1) / (DAYS_IN_MONTH - 1)) * (W - 4);
+const sy = (v: number) => 6 + (1 - v / (BUDGET * 1.06)) * (H - 10);
+
+const SPENT_POINTS: [number, number][] = (() => {
+  const total = DAILY.reduce((a, b) => a + b, 0);
+  let running = 0;
+  return DAILY.map((d, i) => {
+    running += (d / total) * SPENT;
+    return [sx(i + 1), sy(running)];
+  });
+})();
+const SPENT_LINE = SPENT_POINTS.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
+const SPENT_AREA = `${SPENT_LINE} L${sx(TODAY).toFixed(1)} ${H - 4} L${sx(1).toFixed(1)} ${H - 4} Z`;
+const LAST_POINT = SPENT_POINTS[SPENT_POINTS.length - 1];
+
+const ROWS: { name: string; meta: string; amount: number; kind: PurchaseKind; income?: boolean }[] = [
+  { name: 'Groceries', meta: 'DMart · Today', amount: 1240, kind: 'groceries' },
+  { name: 'Dinner order', meta: 'Swiggy · Yesterday', amount: 480, kind: 'food' },
+  { name: 'Salary', meta: 'Acme Labs · 27 Oct', amount: 68500, kind: 'income', income: true },
+  { name: 'Metro card top-up', meta: 'Transport · 26 Oct', amount: 500, kind: 'transport' },
 ];
 
-const KIND_LABEL = { essential: 'Essential', optimizable: 'Could trim', discretionary: 'Optional' } as const;
+const NAV = ['Home', 'My spending', 'Timeline', 'Budgets', 'Savings goals', 'Ask for advice'];
 
 function tryDemo() {
   enterSandbox();
@@ -102,30 +90,38 @@ function tryDemo() {
   window.location.href = '/dashboard';
 }
 
+const container = 'mx-auto w-full max-w-[1120px] px-4 sm:px-8';
+
 export default function HomePage() {
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div className="flex min-h-screen flex-col bg-canvas text-foreground">
       {/* Nav */}
-      <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-md">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
+      <header className="sticky top-0 z-40 bg-canvas/85 backdrop-blur-md">
+        <div className={cn(container, 'flex h-16 items-center justify-between')}>
           <Link href="/" className="flex items-center gap-2">
             <Logo />
-            <span className="text-[15px] font-semibold tracking-tight">SpendWise</span>
+            <span className="text-[15px] font-semibold tracking-[-0.01em]">SpendWise</span>
           </Link>
           <nav className="flex items-center gap-1">
             <a
               href="#features"
-              className="hidden h-9 items-center rounded-md px-3 text-[13px] text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
+              className="hidden h-9 items-center px-3 text-[13px] text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
             >
               Features
             </a>
+            <a
+              href="#how"
+              className="hidden h-9 items-center px-3 text-[13px] text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
+            >
+              How it works
+            </a>
             <Link
               href="/login"
-              className="inline-flex h-9 items-center rounded-md px-3 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
+              className="inline-flex h-9 items-center px-3 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
             >
               Sign in
             </Link>
-            <Link href="/login" className={cn(buttonVariants(), 'ml-1')}>
+            <Link href="/login" className={cn(buttonVariants({ size: 'sm' }), 'ml-1')}>
               Get started
             </Link>
           </nav>
@@ -134,129 +130,116 @@ export default function HomePage() {
 
       <main className="flex-1">
         {/* Hero */}
-        <section className="mx-auto max-w-6xl px-4 pt-16 pb-12 text-center sm:px-6 sm:pt-24 sm:pb-16">
-          <div className="animate-rise mx-auto inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground shadow-card">
-            <span className="size-1.5 rounded-full bg-primary" />
-            Simple money tracking for everyday life
+        <section className={cn(container, 'pt-14 pb-14 sm:pt-24 sm:pb-20')}>
+          <div className="grid gap-10 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] lg:items-end lg:gap-16">
+            <h1 className="animate-rise font-display text-[46px] leading-[0.98] tracking-[-0.02em] text-balance sm:text-[60px] lg:text-[72px]">
+              Know what&apos;s left to spend, every day of the month.
+            </h1>
+            <div className="animate-rise space-y-7 lg:pb-2" style={{ animationDelay: '80ms' }}>
+              <p className="max-w-md text-[17px] leading-relaxed text-muted-foreground text-pretty">
+                Tell SpendWise what you spent in a line, a photo or a bank statement. It keeps your month in order and
+                tells you plainly how you are doing.
+              </p>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+                <Link href="/login" className={buttonVariants({ size: 'lg' })}>
+                  Get started
+                </Link>
+                <button
+                  type="button"
+                  onClick={tryDemo}
+                  className="group inline-flex h-11 items-center gap-1.5 text-[15px] font-medium text-foreground transition-colors hover:text-brand"
+                >
+                  Try the demo
+                  <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+                </button>
+              </div>
+              <p className="text-[13px] text-subtle">The demo uses sample data and stays in your browser. No sign-up.</p>
+            </div>
           </div>
-          <h1
-            className="animate-rise mx-auto mt-6 max-w-3xl text-4xl font-semibold leading-[1.05] tracking-tighter text-balance sm:text-5xl lg:text-6xl"
-            style={{ animationDelay: '60ms' }}
-          >
-            Know where your money goes each month.
-          </h1>
-          <p
-            className="animate-rise mx-auto mt-5 max-w-xl text-base leading-relaxed text-muted-foreground text-pretty sm:text-lg"
-            style={{ animationDelay: '120ms' }}
-          >
-            Write down what you spend in a few words. SpendWise sorts it for you and shows what you needed, what you
-            could cut back on, and how much you are saving.
-          </p>
-          <div
-            className="animate-rise mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center"
-            style={{ animationDelay: '180ms' }}
-          >
-            <Link href="/login" className={buttonVariants({ size: 'lg' })}>
-              Get started
-              <ArrowRight />
-            </Link>
-            <button type="button" onClick={tryDemo} className={buttonVariants({ size: 'lg', variant: 'outline' })}>
-              Try the demo
-            </button>
-          </div>
-          <p className="mt-4 text-[13px] text-muted-foreground">
-            The demo uses sample data and stays in your browser. No sign-up needed.
-          </p>
         </section>
 
-        {/* Product preview */}
-        <section className="relative px-4 pb-20 sm:px-6 sm:pb-28">
-          <div
-            aria-hidden
-            className="bg-grid pointer-events-none absolute inset-x-0 -top-8 bottom-0 [mask-image:radial-gradient(ellipse_at_center,black_40%,transparent_75%)]"
-          />
-          <div
-            className="animate-rise relative mx-auto max-w-5xl overflow-hidden rounded-xl border border-border bg-card shadow-pop"
-            style={{ animationDelay: '240ms' }}
-          >
-            <ProductPreview />
-          </div>
+        {/* Product shot */}
+        <section className={cn(container, 'pb-20 sm:pb-28')}>
+          <figure className="animate-rise" style={{ animationDelay: '160ms' }}>
+            <div className="rounded-[20px] bg-foreground/[0.035] p-1.5 ring-1 ring-border sm:p-2">
+              <ProductShot />
+            </div>
+            <figcaption className="mt-4 text-[13px] text-muted-foreground">
+              Home on 29 October. The green line is what you have spent so far; the dashed line is an even pace to your
+              budget.
+            </figcaption>
+          </figure>
         </section>
 
         {/* Features */}
-        <section id="features" className="scroll-mt-20 border-t border-border">
-          <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-            <div className="max-w-2xl">
-              <p className="text-[13px] font-medium text-primary">What you get</p>
-              <h2 className="mt-2 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-                Simple tools to help you spend wisely.
-              </h2>
-              <p className="mt-4 text-base leading-relaxed text-muted-foreground">
-                No spreadsheets and no money jargon. Just a clear picture of your month.
-              </p>
-            </div>
-            <div className="mt-12 grid gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-2 lg:grid-cols-3">
-              {FEATURES.map(({ icon: Icon, title, body, tone }) => (
-                <div key={title} className="bg-card p-6 transition-colors hover:bg-accent/40 sm:p-7">
-                  <div className={cn('flex size-9 items-center justify-center rounded-lg', tone)}>
-                    <Icon className="size-4" aria-hidden />
+        <section id="features" className="scroll-mt-16">
+          <div className={cn(container, 'py-20 sm:py-28')}>
+            <div className="grid gap-10 border-t border-foreground/80 pt-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:gap-16">
+              <div className="space-y-3">
+                <p className="text-[13px] text-muted-foreground">What it does</p>
+                <h2 className="font-display text-[36px] leading-[1.02] tracking-[-0.01em] text-balance sm:text-[44px]">
+                  Less typing, fewer surprises.
+                </h2>
+              </div>
+              <dl className="grid gap-x-12 sm:grid-cols-2">
+                {FEATURES.map((f, i) => (
+                  <div
+                    key={f.title}
+                    className={cn('border-t border-border py-7', i === 0 && 'border-t-0 pt-0 sm:pt-0', i === 1 && 'sm:border-t-0 sm:pt-0')}
+                  >
+                    <dt className="text-[15px] font-medium tracking-[-0.01em]">{f.title}</dt>
+                    <dd className="mt-2 text-sm leading-relaxed text-muted-foreground">{f.body}</dd>
+                    {f.example && (
+                      <dd className="mt-4 font-display text-[20px] italic leading-snug text-foreground/80">{f.example}</dd>
+                    )}
                   </div>
-                  <h3 className="mt-5 text-[15px] font-medium tracking-tight">{title}</h3>
-                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{body}</p>
-                </div>
-              ))}
+                ))}
+              </dl>
             </div>
           </div>
         </section>
 
         {/* How it works */}
-        <section className="border-t border-border">
-          <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-            <div className="max-w-2xl">
-              <p className="text-[13px] font-medium text-primary">How it works</p>
-              <h2 className="mt-2 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-                Three easy steps, a few minutes a week.
-              </h2>
+        <section id="how" className="scroll-mt-16">
+          <div className={cn(container, 'pb-20 sm:pb-28')}>
+            <div className="grid gap-10 border-t border-foreground/80 pt-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:gap-16">
+              <div className="space-y-3">
+                <p className="text-[13px] text-muted-foreground">How it works</p>
+                <h2 className="font-display text-[36px] leading-[1.02] tracking-[-0.01em] text-balance sm:text-[44px]">
+                  A few minutes a week.
+                </h2>
+              </div>
+              <ol className="grid gap-8 sm:grid-cols-3 sm:gap-8">
+                {STEPS.map((s, i) => (
+                  <li key={s.title} className="space-y-2">
+                    <span className="tabular block font-display text-[40px] leading-none text-brand">{i + 1}</span>
+                    <h3 className="pt-2 text-[15px] font-medium tracking-[-0.01em]">{s.title}</h3>
+                    <p className="text-sm leading-relaxed text-muted-foreground">{s.body}</p>
+                  </li>
+                ))}
+              </ol>
             </div>
-            <ol className="mt-12 grid gap-8 sm:grid-cols-3 sm:gap-6">
-              {STEPS.map((step, i) => (
-                <li key={step.title} className="border-t border-border pt-5">
-                  <span className="tabular flex size-7 items-center justify-center rounded-full bg-primary/10 text-[13px] font-semibold text-primary">
-                    {i + 1}
-                  </span>
-                  <h3 className="mt-3 text-[15px] font-medium tracking-tight">{step.title}</h3>
-                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{step.body}</p>
-                </li>
-              ))}
-            </ol>
           </div>
         </section>
 
-        {/* Final CTA */}
+        {/* Closing */}
         <section className="border-t border-border">
-          <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-            <div className="relative overflow-hidden rounded-2xl border border-border bg-card px-6 py-14 text-center shadow-card sm:px-12">
-              <div
-                aria-hidden
-                className="bg-grid pointer-events-none absolute inset-0 [mask-image:radial-gradient(ellipse_at_center,black_20%,transparent_70%)]"
-              />
-              <div className="relative">
-                <h2 className="mx-auto max-w-xl text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-                  Start with this month.
-                </h2>
-                <p className="mx-auto mt-4 max-w-md text-base text-muted-foreground">
-                  Add a few expenses and see where your money goes. It is free.
-                </p>
-                <div className="mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
-                  <Link href="/login" className={buttonVariants({ size: 'lg' })}>
-                    Get started
-                    <ArrowRight />
-                  </Link>
-                  <button type="button" onClick={tryDemo} className={buttonVariants({ size: 'lg', variant: 'outline' })}>
-                    Try the demo
-                  </button>
-                </div>
-              </div>
+          <div className={cn(container, 'flex flex-col gap-8 py-20 sm:py-24 lg:flex-row lg:items-end lg:justify-between')}>
+            <h2 className="max-w-2xl font-display text-[40px] leading-[1.02] tracking-[-0.01em] text-balance sm:text-[52px]">
+              Start with this month. It&apos;s free.
+            </h2>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+              <Link href="/login" className={buttonVariants({ size: 'lg' })}>
+                Get started
+              </Link>
+              <button
+                type="button"
+                onClick={tryDemo}
+                className="group inline-flex h-11 items-center gap-1.5 text-[15px] font-medium text-foreground transition-colors hover:text-brand"
+              >
+                Try the demo
+                <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+              </button>
             </div>
           </div>
         </section>
@@ -264,17 +247,17 @@ export default function HomePage() {
 
       {/* Footer */}
       <footer className="border-t border-border">
-        <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-8 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-          <div className="flex items-center gap-2">
+        <div className={cn(container, 'flex flex-col gap-3 py-6 sm:flex-row sm:items-center sm:justify-between')}>
+          <div className="flex items-center gap-2 text-[13px]">
             <Logo className="size-5 rounded-md" />
-            <span className="text-[13px] font-medium">SpendWise</span>
-            <span className="text-[13px] text-muted-foreground">· Money tracking, made simple</span>
+            <span className="font-medium">SpendWise</span>
+            <span className="text-muted-foreground">Personal money, kept simple</span>
           </div>
-          <div className="flex items-center gap-1 text-[13px] text-muted-foreground">
-            <a href="#features" className="inline-flex h-9 items-center rounded-md px-2 transition-colors hover:text-foreground">
+          <div className="-ml-2 flex items-center gap-1 text-[13px] text-muted-foreground sm:ml-0">
+            <a href="#features" className="inline-flex h-9 items-center px-2 transition-colors hover:text-foreground">
               Features
             </a>
-            <Link href="/login" className="inline-flex h-9 items-center rounded-md px-2 transition-colors hover:text-foreground">
+            <Link href="/login" className="inline-flex h-9 items-center px-2 transition-colors hover:text-foreground">
               Sign in
             </Link>
             <ThemeToggle />
@@ -285,107 +268,117 @@ export default function HomePage() {
   );
 }
 
-/** Static mock of the dashboard, built from plain divs. */
-function ProductPreview() {
+/** Static, scaled-down copy of the Home screen: sidebar on canvas, content on a sheet. */
+function ProductShot() {
   return (
-    <div aria-hidden className="select-none text-left">
-      {/* Window bar */}
-      <div className="flex h-10 items-center gap-3 border-b border-border px-4">
-        <div className="flex gap-1.5">
-          <span className="size-2.5 rounded-full bg-chart-4" />
-          <span className="size-2.5 rounded-full bg-chart-4" />
-          <span className="size-2.5 rounded-full bg-chart-4" />
+    <div aria-hidden className="pointer-events-none flex select-none overflow-hidden rounded-[14px] bg-canvas text-left">
+      {/* Sidebar */}
+      <div className="hidden w-[176px] shrink-0 flex-col gap-0.5 px-3 py-4 md:flex">
+        <div className="mb-4 flex items-center gap-2 px-1.5">
+          <Logo className="size-5 rounded-md" />
+          <span className="text-[13px] font-semibold">SpendWise</span>
         </div>
-        <span className="text-xs text-muted-foreground">Overview · October</span>
-      </div>
-
-      {/* KPIs */}
-      <div className="grid grid-cols-2 divide-border border-b border-border sm:grid-cols-4 sm:divide-x">
-        {[
-          { label: 'Spent this month', value: '₹42,380', hint: '8% less than September', tone: 'text-success' },
-          { label: 'Left this month', value: '₹7,620', hint: '85% of budget used', tone: 'text-warning' },
-          { label: 'Optional', value: '₹9,140', hint: '22% of spending', tone: 'text-muted-foreground' },
-          { label: 'Saved', value: '18%', hint: 'of money in', tone: 'text-muted-foreground' },
-        ].map((k, i) => (
+        {NAV.map((n, i) => (
           <div
-            key={k.label}
-            className={cn('p-4 sm:p-5', i < 2 && 'border-b border-border sm:border-b-0', i % 2 === 0 && 'border-r border-border sm:border-r-0')}
+            key={n}
+            className={cn(
+              'flex h-7 items-center gap-2 rounded-md px-2 text-[12px]',
+              i === 0
+                ? 'bg-card font-medium text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.06),0_0_0_1px_var(--border)]'
+                : 'text-muted-foreground'
+            )}
           >
-            <p className="text-xs text-muted-foreground">{k.label}</p>
-            <p className="mt-1.5 text-xl font-semibold tracking-tight tabular sm:text-2xl">{k.value}</p>
-            <p className={cn('mt-1 text-xs tabular', k.tone)}>{k.hint}</p>
+            <span className={cn('size-1.5 rounded-full', i === 0 ? 'bg-brand' : 'bg-subtle/60')} />
+            {n}
           </div>
         ))}
       </div>
 
-      <div className="grid md:grid-cols-5">
-        {/* Chart */}
-        <div className="border-b border-border p-4 sm:p-5 md:col-span-3 md:border-b-0 md:border-r">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium">Spending each day</p>
-            <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <span className="size-2 rounded-sm bg-essential" />
-                Essential
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="size-2 rounded-sm bg-trim" />
-                Could trim
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="size-2 rounded-sm bg-optional" />
-                Optional
-              </span>
-            </div>
+      {/* Sheet */}
+      <div className="m-0 min-w-0 flex-1 rounded-[12px] bg-card shadow-sheet md:my-2 md:mr-2">
+        <div className="space-y-8 px-5 py-6 sm:px-8 sm:py-8">
+          <div className="space-y-1">
+            <p className="text-[12px] text-muted-foreground">Thursday, 29 October</p>
+            <p className="font-display text-[26px] leading-[1.05] sm:text-[30px]">Good evening, Priya</p>
           </div>
-          <div className="relative mt-6 h-40">
-            <div className="absolute inset-0 flex flex-col justify-between">
-              {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="border-t border-dashed border-border" />
-              ))}
-            </div>
-            <div className="relative flex h-full items-end gap-1.5 sm:gap-2">
-              {BARS.map(([ess, trim, opt], i) => (
-                <div key={i} className="flex h-full flex-1 flex-col justify-end gap-px">
-                  <div className="rounded-t-[3px] bg-optional" style={{ height: `${opt}%` }} />
-                  <div className="bg-trim" style={{ height: `${trim}%` }} />
-                  <div className="bg-essential" style={{ height: `${ess}%` }} />
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="mt-2 flex justify-between text-[11px] text-muted-foreground tabular">
-            <span>Oct 18</span>
-            <span>Oct 31</span>
-          </div>
-        </div>
 
-        {/* Transactions */}
-        <div className="md:col-span-2">
-          <div className="flex items-center justify-between px-4 pt-4 sm:px-5 sm:pt-5">
-            <p className="text-sm font-medium">Latest</p>
-            <span className="text-xs font-medium text-primary">See all</span>
+          <div className="grid items-end gap-6 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)] sm:gap-8">
+            <div className="space-y-3">
+              <p className="text-[13px] text-muted-foreground">Left to spend in October</p>
+              <Money amount={1665} size="hero" className="text-[48px] sm:text-[56px]" />
+              <p className="text-[13px] leading-relaxed text-muted-foreground">
+                <Money amount={SPENT} size="sm" decimals={false} tone="muted" className="text-[13px]" /> spent of{' '}
+                <Money amount={BUDGET} size="sm" decimals={false} tone="muted" className="text-[13px]" /> · 3 days to go · about{' '}
+                <Money amount={555} size="sm" decimals={false} tone="brand" className="text-[13px]" /> a day
+              </p>
+            </div>
+            <div>
+              <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full overflow-visible">
+                <path d={SPENT_AREA} fill="var(--brand)" fillOpacity={0.07} />
+                <line
+                  x1={sx(1)}
+                  y1={sy(BUDGET / DAYS_IN_MONTH)}
+                  x2={sx(DAYS_IN_MONTH)}
+                  y2={sy(BUDGET)}
+                  stroke="var(--chart-3)"
+                  strokeWidth={1.25}
+                  strokeDasharray="4 4"
+                />
+                <path d={SPENT_LINE} fill="none" stroke="var(--brand)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+                <circle cx={LAST_POINT[0]} cy={LAST_POINT[1]} r={4} fill="var(--brand)" stroke="var(--card)" strokeWidth={2} />
+              </svg>
+              <div className="tabular mt-1.5 flex justify-between text-[11px] text-subtle">
+                <span>1 Oct</span>
+                <span>16 Oct</span>
+                <span>31 Oct</span>
+              </div>
+            </div>
           </div>
-          <ul className="mt-2 divide-y divide-border">
-            {TRANSACTIONS.map((t) => (
-              <li key={t.name} className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
-                <div className="flex min-w-0 items-center gap-3">
-                  <span
-                    className="size-2.5 shrink-0 rounded-full"
-                    style={{ background: PURCHASE_KINDS[t.purchase].color }}
-                  />
-                  <div className="min-w-0">
-                    <p className="truncate text-[13px] font-medium">{t.name}</p>
-                    <p className="truncate text-xs text-muted-foreground">{t.meta}</p>
-                  </div>
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-1">
-                  <span className="text-[13px] font-medium tabular">{t.amount}</span>
-                  <Badge variant={t.kind}>{KIND_LABEL[t.kind]}</Badge>
-                </div>
-              </li>
+
+          <div className="grid grid-cols-2 gap-y-4 border-y border-border py-4 sm:grid-cols-4 sm:divide-x sm:divide-border">
+            {[
+              { label: 'Money in', value: <Money amount={68500} size="md" tone="success" /> },
+              { label: 'Spent', value: <Money amount={SPENT} size="md" /> },
+              { label: 'Saved', value: <Money amount={68500 - SPENT} size="md" />, hint: '41% of what came in' },
+              { label: 'Daily average', value: <Money amount={1391} size="md" decimals={false} />, hint: 'over 29 days' },
+            ].map((m) => (
+              <div key={m.label} className="space-y-1 sm:px-4 sm:first:pl-0">
+                <div className="text-[12px] text-muted-foreground">{m.label}</div>
+                <div className="text-[17px] font-medium leading-none tracking-[-0.02em]">{m.value}</div>
+                {m.hint && <div className="text-[11px] text-muted-foreground">{m.hint}</div>}
+              </div>
             ))}
-          </ul>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-[13px] font-medium">Recent</p>
+            <ul className="-mx-2 divide-y divide-border/70">
+              {ROWS.map((r) => {
+                const color = PURCHASE_KINDS[r.kind].color;
+                return (
+                  <li key={r.name} className="flex items-center gap-3 px-2 py-2.5">
+                    <span
+                      className="flex size-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold"
+                      style={{ background: `${color}1f`, color }}
+                    >
+                      {r.meta.slice(0, 1)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px]">{r.name}</div>
+                      <div className="truncate text-[11px] text-muted-foreground">{r.meta}</div>
+                    </div>
+                    <Money
+                      amount={r.amount}
+                      size="sm"
+                      className="text-[13px]"
+                      sign={r.income ? 'plus' : 'none'}
+                      tone={r.income ? 'success' : 'default'}
+                    />
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         </div>
       </div>
     </div>

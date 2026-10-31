@@ -34,8 +34,7 @@ import {
 } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Money } from '@/components/ui/money';
 import { Select } from '@/components/ui/select';
 import { Field } from '@/components/ui/label';
 import { Dialog } from '@/components/ui/dialog';
@@ -46,7 +45,7 @@ import { DataService, DEFAULT_SYSTEM_CATEGORIES } from '@/lib/data-service';
 import { Transaction, Category, Essentiality } from '@/types/database';
 import { toLocalDateString } from '@/lib/calculations/finance';
 import { PURCHASE_KINDS, kindForCategory, kindForTransaction } from '@/lib/categories/kinds';
-import { cn, formatCurrency } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 type TypeFilter = 'all' | 'expense' | 'income';
@@ -108,11 +107,14 @@ function formatDayHeading(dateStr: string, today: string): string {
   }).format(new Date(Date.UTC(y, m - 1, d)));
 }
 
-function formatSigned(amount: number): string {
-  if (amount > 0) return `+${formatCurrency(amount)}`;
-  if (amount < 0) return `−${formatCurrency(-amount)}`;
-  return formatCurrency(0);
-}
+const ESSENTIALITY_COLORS: Record<Essentiality, string> = {
+  essential: 'var(--essential)',
+  optimizable: 'var(--trim)',
+  discretionary: 'var(--optional)',
+};
+
+/** Quieter fields for the filter toolbar: no shadow, smaller type. */
+const toolbarField = 'h-8 text-[13px] shadow-none';
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -302,62 +304,62 @@ export default function TransactionsPage() {
   const newExpenseLink = (
     <Link href="/add-expense" className={buttonVariants()}>
       <Plus />
-      Add an expense
+      Add spending
     </Link>
   );
 
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-10">
         <div className="flex items-end justify-between gap-4">
-          <div className="space-y-2">
-            <Skeleton className="h-7 w-40" />
-            <Skeleton className="h-4 w-56" />
+          <div className="space-y-3">
+            <Skeleton className="h-10 w-56" />
+            <Skeleton className="h-4 w-48" />
           </div>
           <Skeleton className="h-9 w-32 rounded-lg" />
         </div>
-        <div className="space-y-3">
-          <Skeleton className="h-9 w-full rounded-lg" />
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[0, 1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-14 rounded-lg" />
-            ))}
-          </div>
+        <div className="flex flex-col gap-2 lg:flex-row">
+          <Skeleton className="h-8 flex-1 rounded-lg" />
+          <Skeleton className="h-8 w-full rounded-lg lg:w-[30rem]" />
         </div>
         {[0, 1].map((g) => (
-          <div key={g} className="space-y-2">
-            <Skeleton className="h-4 w-24" />
-            <Card className="divide-y divide-border">
-              {[0, 1, 2].map((r) => (
-                <div key={r} className="flex items-center gap-3 px-4 py-3">
-                  <Skeleton className="size-9 rounded-lg" />
-                  <div className="flex-1 space-y-1.5">
-                    <Skeleton className="h-4 w-1/3" />
-                    <Skeleton className="h-3 w-1/4" />
-                  </div>
-                  <Skeleton className="h-4 w-16" />
+          <div key={g} className="space-y-1">
+            <Skeleton className="mb-2 h-3.5 w-24" />
+            {[0, 1, 2].map((r) => (
+              <div key={r} className="flex items-center gap-3 py-3">
+                <Skeleton className="size-8 rounded-full" />
+                <div className="flex-1 space-y-1.5">
+                  <Skeleton className="h-4 w-1/3" />
+                  <Skeleton className="h-3 w-1/4" />
                 </div>
-              ))}
-            </Card>
+                <Skeleton className="h-4 w-16" />
+              </div>
+            ))}
           </div>
         ))}
       </div>
     );
   }
 
-  const description =
-    transactions.length === 0
-      ? 'Everything you spend and receive, in one place.'
-      : hasFilters
-        ? `Showing ${filteredTransactions.length} of ${transactions.length} entries · ${formatCurrency(totalSpent)} spent`
-        : `${transactions.length} ${transactions.length === 1 ? 'entry' : 'entries'} · ${formatCurrency(totalSpent)} spent`;
+  const countLabel = hasFilters
+    ? `Showing ${filteredTransactions.length} of ${transactions.length}`
+    : `${transactions.length} ${transactions.length === 1 ? 'entry' : 'entries'}`;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
       <PageHeader
         title="My spending"
-        description={<span className="tabular">{description}</span>}
+        description={
+          transactions.length === 0 ? (
+            'Everything you spend and receive, in one place.'
+          ) : (
+            <span className="tabular">
+              {countLabel} · <Money amount={totalSpent} size="sm" tone="muted" decimals={false} /> spent
+            </span>
+          )
+        }
         actions={newExpenseLink}
+        className="animate-rise"
       />
 
       {transactions.length === 0 ? (
@@ -368,37 +370,42 @@ export default function TransactionsPage() {
           action={newExpenseLink}
         />
       ) : (
-        <>
-          {/* Toolbar */}
-          <div className="space-y-3 animate-rise">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <div className="space-y-6">
+          {/* Toolbar: sits on the sheet, no box */}
+          <div
+            className="flex flex-col gap-2 lg:flex-row lg:items-center animate-rise"
+            style={{ animationDelay: '40ms' }}
+          >
+            <div className="relative lg:flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-subtle" />
               <Input
                 type="search"
-                placeholder="Search by what you bought, the shop or the category"
+                placeholder="Search what you bought, the shop or the category"
                 aria-label="Search your spending"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
+                className={cn(toolbarField, 'pl-8')}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Field label="Show" htmlFor="filter-type">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:flex lg:shrink-0">
+              <div className="lg:w-32">
                 <Select
-                  id="filter-type"
+                  aria-label="Show"
                   value={typeFilter}
                   onChange={(e) => setTypeFilter(e.target.value as TypeFilter)}
+                  className={toolbarField}
                 >
                   <option value="all">Everything</option>
                   <option value="expense">Money out</option>
                   <option value="income">Money in</option>
                 </Select>
-              </Field>
-              <Field label="Category" htmlFor="filter-category">
+              </div>
+              <div className="lg:w-40">
                 <Select
-                  id="filter-category"
+                  aria-label="Category"
                   value={categoryFilter}
                   onChange={(e) => setCategoryFilter(e.target.value)}
+                  className={toolbarField}
                 >
                   <option value="all">All categories</option>
                   <optgroup label="Expense">
@@ -416,28 +423,39 @@ export default function TransactionsPage() {
                     ))}
                   </optgroup>
                 </Select>
-              </Field>
-              <Field label="Type of spending" htmlFor="filter-essentiality">
+              </div>
+              <div className="lg:w-32">
                 <Select
-                  id="filter-essentiality"
+                  aria-label="Type of spending"
                   value={essentialityFilter}
                   onChange={(e) => setEssentialityFilter(e.target.value)}
+                  className={toolbarField}
                 >
                   <option value="all">Any type</option>
                   <option value="essential">Essential</option>
                   <option value="optimizable">Could trim</option>
                   <option value="discretionary">Optional</option>
                 </Select>
-              </Field>
-              <Field label="Order" htmlFor="filter-sort">
-                <Select id="filter-sort" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)}>
+              </div>
+              <div className="lg:w-44">
+                <Select
+                  aria-label="Order"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as SortBy)}
+                  className={toolbarField}
+                >
                   <option value="date_desc">Newest first</option>
                   <option value="date_asc">Oldest first</option>
                   <option value="amount_desc">Biggest amount first</option>
                   <option value="amount_asc">Smallest amount first</option>
                 </Select>
-              </Field>
+              </div>
             </div>
+            {hasFilters && (
+              <Button variant="ghost" size="sm" onClick={clearFilters} className="self-start lg:self-auto">
+                Clear
+              </Button>
+            )}
           </div>
 
           {filteredTransactions.length === 0 ? (
@@ -452,23 +470,22 @@ export default function TransactionsPage() {
               }
             />
           ) : (
-            <div className="space-y-6 animate-rise" style={{ animationDelay: '60ms' }}>
+            <div className="space-y-8 animate-rise" style={{ animationDelay: '80ms' }}>
               {groups.map((group) => (
-                <section key={group.key}>
+                <section key={group.key} aria-label={group.label ?? 'All entries'}>
                   {group.label && (
-                    <div className="sticky top-14 z-10 -mx-1 flex items-center justify-between bg-background/85 px-1 py-2 backdrop-blur">
-                      <h2 className="text-[13px] font-medium text-foreground">{group.label}</h2>
-                      <span
-                        className={cn(
-                          'tabular text-xs font-medium',
-                          group.net > 0 ? 'text-success' : 'text-muted-foreground'
-                        )}
-                      >
-                        {formatSigned(group.net)}
-                      </span>
+                    <div className="sticky top-12 z-10 flex items-baseline justify-between gap-3 bg-card/90 pb-1.5 pt-2 backdrop-blur lg:top-0">
+                      <h2 className="text-[13px] text-muted-foreground">{group.label}</h2>
+                      <Money
+                        amount={group.net}
+                        size="sm"
+                        className="text-[13px]"
+                        sign={group.net > 0 ? 'plus' : 'none'}
+                        tone={group.net > 0 ? 'success' : 'muted'}
+                      />
                     </div>
                   )}
-                  <Card className="divide-y divide-border overflow-hidden">
+                  <ul className="-mx-3 divide-y divide-border/70">
                     {group.items.map((tx) => (
                       <TransactionRow
                         key={tx.id}
@@ -478,12 +495,12 @@ export default function TransactionsPage() {
                         onDelete={() => setDeletingId(tx.id)}
                       />
                     ))}
-                  </Card>
+                  </ul>
                 </section>
               ))}
             </div>
           )}
-        </>
+        </div>
       )}
 
       {/* Edit dialog */}
@@ -594,17 +611,15 @@ export default function TransactionsPage() {
         }
       >
         {deletingTx && (
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted px-3 py-2.5 text-sm">
+          <div className="flex items-center justify-between gap-3 border-y border-border py-3 text-sm">
             <span className="truncate text-foreground">{deletingTx.description}</span>
-            <span
-              className={cn(
-                'tabular shrink-0 font-medium',
-                deletingTx.transaction_type === 'income' ? 'text-success' : 'text-foreground'
-              )}
-            >
-              {deletingTx.transaction_type === 'income' ? '+' : ''}
-              {formatCurrency(Number(deletingTx.amount))}
-            </span>
+            <Money
+              amount={Number(deletingTx.amount)}
+              size="sm"
+              className="shrink-0"
+              sign={deletingTx.transaction_type === 'income' ? 'plus' : 'none'}
+              tone={deletingTx.transaction_type === 'income' ? 'success' : 'default'}
+            />
           </div>
         )}
       </Dialog>
@@ -629,52 +644,60 @@ function TransactionRow({
   const meta = [tx.merchant, category?.name ?? 'Uncategorized', tx.payment_method].filter(Boolean).join(' · ');
 
   return (
-    <div className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/50">
-      <div
-        className="flex size-9 shrink-0 items-center justify-center rounded-lg"
+    <li className="group flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-foreground/[0.025]">
+      <span
+        className="flex size-8 shrink-0 items-center justify-center rounded-full"
         style={{ background: `${kind.color}1f`, color: kind.color }}
         title={kind.label}
       >
         <Icon className="size-4" />
-      </div>
+      </span>
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
-          <p className="truncate text-sm font-medium text-foreground" title={tx.original_input ?? undefined}>
+          <p className="truncate text-sm text-foreground" title={tx.original_input ?? undefined}>
             {tx.description}
           </p>
           {tx.entry_method !== 'manual' && (
             <span title={`Captured with ${tx.entry_method === 'ai_voice' ? 'voice' : 'AI text'}`} className="shrink-0">
-              <Sparkles className="size-3 text-primary" aria-label="AI captured" />
+              <Sparkles className="size-3 text-subtle" aria-label="AI captured" />
             </span>
           )}
         </div>
-        <p className="truncate text-xs text-muted-foreground">{meta}</p>
+        <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          {!isIncome && (
+            <span
+              className="size-1.5 shrink-0 rounded-full"
+              style={{ background: ESSENTIALITY_COLORS[tx.essentiality] }}
+              title={ESSENTIALITY_LABELS[tx.essentiality]}
+            >
+              <span className="sr-only">{ESSENTIALITY_LABELS[tx.essentiality]}</span>
+            </span>
+          )}
+          <span className="truncate">{meta}</span>
+          {!isIncome && (
+            <span className="hidden shrink-0 text-subtle sm:pointer-fine:group-hover:inline" aria-hidden>
+              · {ESSENTIALITY_LABELS[tx.essentiality]}
+            </span>
+          )}
+        </p>
       </div>
 
-      {!isIncome && (
-        <Badge variant={tx.essentiality} className="hidden sm:inline-flex">
-          {ESSENTIALITY_LABELS[tx.essentiality]}
-        </Badge>
-      )}
+      <Money
+        amount={Number(tx.amount)}
+        size="sm"
+        className="shrink-0"
+        sign={isIncome ? 'plus' : 'none'}
+        tone={isIncome ? 'success' : 'default'}
+      />
 
-      <div
-        className={cn(
-          'tabular w-24 shrink-0 text-right text-sm font-medium sm:w-28',
-          isIncome ? 'text-success' : 'text-foreground'
-        )}
-      >
-        {isIncome ? '+' : ''}
-        {formatCurrency(Number(tx.amount))}
-      </div>
-
-      <div className="-mr-2 flex shrink-0 items-center transition-opacity sm:pointer-fine:opacity-0 sm:pointer-fine:group-hover:opacity-100 sm:pointer-fine:group-focus-within:opacity-100">
-        <Button variant="ghost" size="icon" onClick={onEdit} aria-label="Edit entry" title="Edit">
+      <div className="-mr-1.5 flex shrink-0 items-center transition-opacity sm:pointer-fine:opacity-0 sm:pointer-fine:group-hover:opacity-100 sm:pointer-fine:group-focus-within:opacity-100">
+        <Button variant="ghost" size="icon-sm" onClick={onEdit} aria-label="Edit entry" title="Edit">
           <Pencil />
         </Button>
         <Button
           variant="ghost"
-          size="icon"
+          size="icon-sm"
           onClick={onDelete}
           aria-label="Delete entry"
           title="Delete"
@@ -683,6 +706,6 @@ function TransactionRow({
           <Trash2 />
         </Button>
       </div>
-    </div>
+    </li>
   );
 }

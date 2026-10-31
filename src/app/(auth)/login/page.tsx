@@ -81,25 +81,23 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen flex-col bg-background">
-      <div className="pointer-events-none absolute inset-0 bg-grid [mask-image:radial-gradient(ellipse_at_top,black,transparent_70%)]" />
-
-      <header className="relative flex h-14 items-center justify-between px-5">
+    <div className="flex min-h-screen flex-col bg-canvas text-foreground">
+      <header className="flex h-16 items-center justify-between px-5 sm:px-8">
         <Link href="/" className="flex items-center gap-2">
           <Logo />
-          <span className="text-[15px] font-semibold tracking-tight">SpendWise</span>
+          <span className="text-[15px] font-semibold tracking-[-0.01em]">SpendWise</span>
         </Link>
         <ThemeToggle />
       </header>
 
-      <main className="relative flex flex-1 items-start justify-center px-5 pt-[12vh] pb-16">
-        <div className="w-full max-w-[380px] animate-rise">
-          <div className="mb-8 space-y-2 text-center">
-            <h1 className="text-2xl font-semibold tracking-[-0.02em]">{COPY[step].title}</h1>
+      <main className="flex flex-1 items-start justify-center px-5 pt-[10vh] pb-16">
+        <div className="w-full max-w-[360px] animate-rise">
+          <div className="mb-9 space-y-2">
+            <h1 className="font-display text-[38px] leading-[1.02] tracking-[-0.01em] text-balance">{COPY[step].title}</h1>
             <p className="text-sm text-muted-foreground">{COPY[step].description}</p>
           </div>
 
-          <form onSubmit={submit} className="space-y-4">
+          <form onSubmit={submit} className="space-y-5">
             {step === 'email' ? (
               <Field label="Email" htmlFor="email">
                 <Input
@@ -111,23 +109,25 @@ export default function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com"
-                  className="h-10"
+                  className="h-11 text-[15px]"
                 />
               </Field>
             ) : (
-              <button
-                type="button"
-                onClick={back}
-                className="flex w-full items-center justify-between rounded-lg border border-border bg-card px-3 py-2.5 text-left text-sm shadow-card transition-colors hover:bg-accent"
-              >
-                <span className="truncate">{email}</span>
-                <span className="ml-3 shrink-0 text-xs text-muted-foreground">Change</span>
-              </button>
+              <div className="flex items-baseline justify-between gap-3 border-b border-border pb-3 text-sm">
+                <span className="min-w-0 truncate text-foreground">{email}</span>
+                <button
+                  type="button"
+                  onClick={back}
+                  className="shrink-0 text-[13px] text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+                >
+                  Change
+                </button>
+              </div>
             )}
 
             {step === 'create' && (
               <Field label="Your name" htmlFor="name" hint="Optional. Shown in the app only.">
-                <Input id="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className="h-10" />
+                <Input id="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className="h-11 text-[15px]" />
               </Field>
             )}
 
@@ -147,7 +147,7 @@ export default function LoginPage() {
                     minLength={step === 'create' ? 8 : 1}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="h-10 pr-10"
+                    className="h-11 pr-10 text-[15px]"
                   />
                   <button
                     type="button"
@@ -162,7 +162,8 @@ export default function LoginPage() {
             )}
 
             {error && (
-              <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[13px] text-destructive">
+              <p role="alert" className="flex items-start gap-2 text-[13px] text-destructive">
+                <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-destructive" />
                 {error}
               </p>
             )}
@@ -176,27 +177,31 @@ export default function LoginPage() {
               <button
                 type="button"
                 onClick={back}
-                className="mx-auto flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"
+                className="flex items-center gap-1.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
               >
                 <ArrowLeft className="size-3.5" /> Use a different email
               </button>
             )}
           </form>
 
-          <div className="my-8 flex items-center gap-3 text-xs text-subtle">
-            <div className="h-px flex-1 bg-border" />
-            or
-            <div className="h-px flex-1 bg-border" />
+          <div className="mt-10 border-t border-border pt-6">
+            <p className="text-sm text-muted-foreground">Just looking around?</p>
+            <button
+              type="button"
+              onClick={startDemo}
+              className="group mt-1 inline-flex items-center gap-1.5 text-[15px] font-medium text-foreground transition-colors hover:text-brand"
+            >
+              Try the demo
+              <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+            </button>
+            <p className="mt-1 text-xs text-subtle">Sample data, saved only in this browser.</p>
           </div>
-
-          <Button variant="outline" size="lg" className="w-full" onClick={startDemo}>
-            Try the demo
-          </Button>
-          <p className="mt-3 text-center text-xs text-muted-foreground">
-            The demo uses sample data saved only in this browser.
-          </p>
         </div>
       </main>
+
+      <footer className="px-5 pb-6 text-center text-xs text-subtle sm:px-8">
+        SpendWise · Personal money, kept simple
+      </footer>
     </div>
   );
 }

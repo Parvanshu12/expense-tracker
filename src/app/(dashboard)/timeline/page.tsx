@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { CalendarClock, FilterX, Plus } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
+import { Money } from '@/components/ui/money';
 import { Segmented } from '@/components/ui/segmented';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -118,7 +118,7 @@ function KindBar({
     <div
       role="img"
       aria-label={total > 0 ? `Spending by kind: ${label}` : 'No spending'}
-      className={cn('flex gap-px overflow-hidden rounded-full bg-muted', className)}
+      className={cn('flex gap-px overflow-hidden rounded-full bg-foreground/[0.05]', className)}
     >
       {segments.map((s) => (
         <div
@@ -138,31 +138,31 @@ function KindBar({
 
 function TimelineSkeleton() {
   return (
-    <div className="space-y-6">
-      <Card className="space-y-4 p-5">
-        <div className="flex items-baseline justify-between">
-          <Skeleton className="h-4 w-24" />
-          <Skeleton className="h-6 w-28" />
+    <div className="space-y-10">
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Skeleton className="h-3.5 w-24" />
+          <Skeleton className="h-7 w-36" />
         </div>
-        <Skeleton className="h-2 w-full rounded-full" />
-        <div className="flex flex-wrap gap-2">
+        <Skeleton className="h-1.5 w-full rounded-full" />
+        <div className="flex flex-wrap gap-1.5">
           {['w-24', 'w-20', 'w-28', 'w-16', 'w-24'].map((w, i) => (
-            <Skeleton key={i} className={cn('h-9 rounded-full', w)} />
+            <Skeleton key={i} className={cn('h-8 rounded-full', w)} />
           ))}
         </div>
-      </Card>
-      <Card className="p-5">
-        <div className="mb-5 flex items-center justify-between">
-          <Skeleton className="h-4 w-32" />
+      </div>
+      <div className="space-y-6 border-t border-border pt-8">
+        <div className="flex items-baseline justify-between">
+          <Skeleton className="h-7 w-40" />
           <Skeleton className="h-4 w-20" />
         </div>
         {[0, 1].map((g) => (
-          <div key={g} className="mb-5 space-y-3 last:mb-0">
+          <div key={g} className="space-y-3">
             <div className="flex justify-between">
               <Skeleton className="h-3.5 w-20" />
               <Skeleton className="h-3.5 w-14" />
             </div>
-            <div className="space-y-3 border-l border-border pl-4">
+            <div className="ml-1 space-y-4 border-l border-border pl-5">
               {[0, 1, 2].map((r) => (
                 <div key={r} className="flex items-center justify-between gap-4">
                   <div className="space-y-1.5">
@@ -175,7 +175,7 @@ function TimelineSkeleton() {
             </div>
           </div>
         ))}
-      </Card>
+      </div>
     </div>
   );
 }
@@ -287,12 +287,13 @@ export default function TimelinePage() {
       title="Timeline"
       description="Everything you spent, day by day. The colours show what kind of purchase it was."
       actions={<Segmented value={period} onChange={setPeriod} options={PERIOD_OPTIONS} />}
+      className="animate-rise"
     />
   );
 
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-10">
         {header}
         <TimelineSkeleton />
       </div>
@@ -302,7 +303,7 @@ export default function TimelinePage() {
   const periodLabel = PERIOD_OPTIONS.find((o) => o.value === period)?.label.toLowerCase() ?? '';
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
       {header}
 
       {periodRows.length === 0 ? (
@@ -317,31 +318,27 @@ export default function TimelinePage() {
           action={
             <Link href="/add-expense" className={buttonVariants()}>
               <Plus />
-              New expense
+              Add spending
             </Link>
           }
         />
       ) : (
         <>
-          {/* Summary: composition bar + legend */}
-          <Card className="animate-rise space-y-4 p-5">
-            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-              <div className="space-y-0.5">
-                <p className="text-sm font-medium text-foreground">Spent</p>
-                <p className="text-xs text-muted-foreground">
-                  {expenseCount} {expenseCount === 1 ? 'expense' : 'expenses'}
-                </p>
+          {/* Summary: total, one thin composition bar, legend chips. No box. */}
+          <section className="space-y-4 animate-rise" style={{ animationDelay: '40ms' }} aria-label="Spending by kind">
+            <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-1">
+              <div className="space-y-2">
+                <p className="text-[13px] text-muted-foreground">{period === 'this_month' ? 'Spent this month' : period === 'last_3_months' ? 'Spent in the last 3 months' : 'Spent, all time'}</p>
+                <Money amount={periodSpent} size="xl" />
               </div>
-              <p className="tabular text-2xl font-semibold tracking-[-0.02em] text-foreground">
-                {formatCurrency(periodSpent)}
+              <p className="text-[13px] text-muted-foreground">
+                {expenseCount} {expenseCount === 1 ? 'expense' : 'expenses'}
               </p>
             </div>
 
-            {periodSpent > 0 && <KindBar byKind={periodByKind} hidden={hidden} className="h-2" />}
+            {periodSpent > 0 && <KindBar byKind={periodByKind} hidden={hidden} className="h-1.5" />}
 
-            <p className="text-[13px] text-muted-foreground">Tap a colour to hide or show that kind of spending.</p>
-
-            <div className="-mt-2 flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by kind">
+            <div className="-mx-2.5 flex flex-wrap items-center gap-0.5" role="group" aria-label="Filter by kind">
               {presentKinds.map((kind) => {
                 const info = PURCHASE_KINDS[kind];
                 const on = !hidden.has(kind);
@@ -353,11 +350,9 @@ export default function TimelinePage() {
                     onClick={() => toggleKind(kind)}
                     title={on ? `Hide ${info.label}` : `Show ${info.label}`}
                     className={cn(
-                      'inline-flex h-9 max-w-full items-center gap-1.5 rounded-full border px-3 text-[13px] transition-colors',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background',
-                      on
-                        ? 'border-border bg-card text-foreground hover:bg-accent'
-                        : 'border-dashed border-border bg-transparent text-muted-foreground hover:text-foreground'
+                      'inline-flex h-8 max-w-full items-center gap-1.5 rounded-full px-2.5 text-[13px] transition-colors',
+                      'hover:bg-foreground/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      on ? 'text-foreground' : 'text-subtle'
                     )}
                   >
                     <span
@@ -366,15 +361,14 @@ export default function TimelinePage() {
                       style={{ borderColor: info.color, background: on ? info.color : 'transparent' }}
                     />
                     <span className={cn('truncate', !on && 'line-through decoration-from-font')}>{info.label}</span>
-                    <span
-                      className={cn(
-                        'tabular',
-                        !on ? 'text-muted-foreground' : kind === 'income' ? 'text-success' : 'text-muted-foreground'
-                      )}
-                    >
-                      {kind === 'income' ? '+' : ''}
-                      {formatCurrency(periodByKind.get(kind) ?? 0)}
-                    </span>
+                    <Money
+                      amount={periodByKind.get(kind) ?? 0}
+                      size="sm"
+                      decimals={false}
+                      className="text-[13px]"
+                      sign={kind === 'income' ? 'plus' : 'none'}
+                      tone={on && kind === 'income' ? 'success' : 'muted'}
+                    />
                   </button>
                 );
               })}
@@ -382,13 +376,14 @@ export default function TimelinePage() {
                 <button
                   type="button"
                   onClick={showAll}
-                  className="ml-1 h-9 rounded-sm px-2 text-[13px] font-medium text-primary underline-offset-4 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="ml-1 h-8 rounded-sm px-2 text-[13px] font-medium text-foreground underline-offset-4 transition-colors hover:text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   Show all
                 </button>
               )}
             </div>
-          </Card>
+            <p className="text-xs text-subtle">Tap a colour to hide or show that kind of spending.</p>
+          </section>
 
           {/* Timeline */}
           {visibleRows.length === 0 ? (
@@ -403,85 +398,75 @@ export default function TimelinePage() {
               }
             />
           ) : (
-            <div className="space-y-6">
+            <div className="space-y-12">
               {months.map((month, mi) => (
                 <section
                   key={month.key}
                   aria-labelledby={`month-${month.key}`}
-                  className="animate-rise"
-                  style={{ animationDelay: `${Math.min(mi, 4) * 60 + 60}ms` }}
+                  className="space-y-6 border-t border-border pt-8 animate-rise"
+                  style={{ animationDelay: `${Math.min(mi, 4) * 60 + 80}ms` }}
                 >
-                  <Card className="overflow-hidden">
-                    <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
-                      <h2 id={`month-${month.key}`} className="truncate text-sm font-medium text-foreground">
-                        {formatMonthHeading(month.key)}
-                      </h2>
-                      <div className="flex shrink-0 items-center gap-3">
-                        {month.spent > 0 && <KindBar byKind={month.byKind} className="hidden h-1 w-16 sm:flex sm:w-24" />}
-                        {month.spent > 0 || month.income === 0 ? (
-                          <span className="tabular text-sm font-medium text-foreground">
-                            {formatCurrency(month.spent)}
-                          </span>
-                        ) : (
-                          <span className="tabular text-sm font-medium text-success">
-                            +{formatCurrency(month.income)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <h2
+                      id={`month-${month.key}`}
+                      className="truncate font-display text-[26px] leading-tight tracking-[-0.01em] text-foreground sm:text-[28px]"
+                    >
+                      {formatMonthHeading(month.key)}
+                    </h2>
+                    {month.spent > 0 || month.income === 0 ? (
+                      <Money amount={month.spent} size="md" className="shrink-0" />
+                    ) : (
+                      <Money amount={month.income} size="md" sign="plus" tone="success" className="shrink-0" />
+                    )}
+                  </div>
 
-                    <div className="space-y-5 px-2 py-4 sm:px-3">
-                      {month.days.map((day) => (
-                        <div key={day.date}>
-                          <div className="flex items-baseline justify-between gap-3 px-2 pb-1.5">
-                            <h3 className="text-[13px] font-medium text-foreground">
-                              {formatDayHeading(day.date, today)}
-                            </h3>
-                            {day.spent > 0 || day.income === 0 ? (
-                              <span className="tabular text-xs text-muted-foreground">{formatCurrency(day.spent)}</span>
-                            ) : (
-                              <span className="tabular text-xs text-success">+{formatCurrency(day.income)}</span>
-                            )}
-                          </div>
-
-                          <ol className="ml-3 border-l border-border">
-                            {day.rows.map(({ tx, kind, categoryName }) => {
-                              const isIncome = tx.transaction_type === 'income';
-                              const info = PURCHASE_KINDS[isIncome ? 'income' : kind];
-                              const meta = [tx.merchant, categoryName, tx.payment_method].filter(Boolean).join(' · ');
-                              return (
-                                <li
-                                  key={tx.id}
-                                  className="relative flex items-center gap-3 rounded-r-md py-2 pl-4 pr-2 transition-colors hover:bg-accent/50"
-                                >
-                                  <span
-                                    aria-hidden
-                                    title={info.label}
-                                    className="absolute -left-[4.5px] top-1/2 size-2 -translate-y-1/2 rounded-full ring-2 ring-card"
-                                    style={{ background: info.color }}
-                                  />
-                                  <span className="sr-only">{info.label}: </span>
-                                  <div className="min-w-0 flex-1">
-                                    <p className="truncate text-sm text-foreground">{tx.description || 'No description'}</p>
-                                    {meta && <p className="truncate text-xs text-muted-foreground">{meta}</p>}
-                                  </div>
-                                  <span
-                                    className={cn(
-                                      'tabular shrink-0 text-sm',
-                                      isIncome ? 'font-medium text-success' : 'text-foreground'
-                                    )}
-                                  >
-                                    {isIncome ? '+' : ''}
-                                    {formatCurrency(tx.amount)}
-                                  </span>
-                                </li>
-                              );
-                            })}
-                          </ol>
+                  <div className="space-y-6">
+                    {month.days.map((day) => (
+                      <div key={day.date}>
+                        <div className="flex items-baseline justify-between gap-3 pb-2">
+                          <h3 className="text-[13px] text-muted-foreground">{formatDayHeading(day.date, today)}</h3>
+                          {day.spent > 0 || day.income === 0 ? (
+                            <Money amount={day.spent} size="sm" tone="muted" className="text-xs" />
+                          ) : (
+                            <Money amount={day.income} size="sm" sign="plus" tone="success" className="text-xs" />
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  </Card>
+
+                        <ol className="ml-1 border-l border-border">
+                          {day.rows.map(({ tx, kind, categoryName }) => {
+                            const isIncome = tx.transaction_type === 'income';
+                            const info = PURCHASE_KINDS[isIncome ? 'income' : kind];
+                            const meta = [tx.merchant, categoryName, tx.payment_method].filter(Boolean).join(' · ');
+                            return (
+                              <li
+                                key={tx.id}
+                                className="relative flex items-center gap-3 rounded-r-lg py-2.5 pl-5 pr-2 transition-colors hover:bg-foreground/[0.025]"
+                              >
+                                <span
+                                  aria-hidden
+                                  title={info.label}
+                                  className="absolute -left-[4.5px] top-1/2 size-2 -translate-y-1/2 rounded-full ring-[3px] ring-card"
+                                  style={{ background: info.color }}
+                                />
+                                <span className="sr-only">{info.label}: </span>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm text-foreground">{tx.description || 'No description'}</p>
+                                  {meta && <p className="truncate text-xs text-muted-foreground">{meta}</p>}
+                                </div>
+                                <Money
+                                  amount={tx.amount}
+                                  size="sm"
+                                  className="shrink-0"
+                                  sign={isIncome ? 'plus' : 'none'}
+                                  tone={isIncome ? 'success' : 'default'}
+                                />
+                              </li>
+                            );
+                          })}
+                        </ol>
+                      </div>
+                    ))}
+                  </div>
                 </section>
               ))}
             </div>

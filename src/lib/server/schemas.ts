@@ -44,6 +44,7 @@ export const transactionUpdate = z
     purchase_time: time.nullable(),
     essentiality,
     user_corrected_classification: z.boolean(),
+    review_status: z.enum(['confirmed', 'pending_review', 'rejected']),
     notes: optionalText(1000),
   })
   .partial();

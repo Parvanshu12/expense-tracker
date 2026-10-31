@@ -6,7 +6,6 @@ import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/ui/page-header';
 import { Button, buttonVariants } from '@/components/ui/button';
-import { Card, CardContent, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Field } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
@@ -101,7 +100,7 @@ function Section({
       style={delay ? { animationDelay: `${delay}ms` } : undefined}
     >
       <div className="space-y-1">
-        <h2 className="text-sm font-medium text-foreground">{title}</h2>
+        <h2 className="text-[15px] font-medium tracking-[-0.01em] text-foreground">{title}</h2>
         <p className="text-[13px] leading-relaxed text-muted-foreground">{description}</p>
       </div>
       <div className="min-w-0">{children}</div>
@@ -109,22 +108,23 @@ function Section({
   );
 }
 
-function SaveFooter({ hint, dirty, saving }: { hint: React.ReactNode; dirty: boolean; saving: boolean }) {
+/** Hint on the left, save button aligned right, directly under the fields. */
+function SaveFooter({ hint, dirty, saving }: { hint?: React.ReactNode; dirty: boolean; saving: boolean }) {
   return (
-    <CardFooter className="justify-between gap-3 rounded-b-xl bg-muted/40">
+    <div className="flex items-center justify-between gap-3 pt-6">
       <p className="text-xs text-muted-foreground">{hint}</p>
       <Button type="submit" disabled={!dirty} loading={saving}>
         Save changes
       </Button>
-    </CardFooter>
+    </div>
   );
 }
 
 function SettingsSkeleton() {
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
       <div className="space-y-2">
-        <Skeleton className="h-7 w-32" />
+        <Skeleton className="h-10 w-36" />
         <Skeleton className="h-4 w-64" />
       </div>
       <div className="divide-y divide-border border-t border-border">
@@ -134,7 +134,13 @@ function SettingsSkeleton() {
               <Skeleton className="h-4 w-24" />
               <Skeleton className="h-3 w-44" />
             </div>
-            <Skeleton className="h-44 w-full rounded-xl" />
+            <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Skeleton className="h-14" />
+                <Skeleton className="h-14" />
+              </div>
+              <Skeleton className="ml-auto h-9 w-32 rounded-lg" />
+            </div>
           </div>
         ))}
       </div>
@@ -165,50 +171,46 @@ function SituationCard({ profile, onSaved }: { profile: Profile; onSaved: (p: Pr
   };
 
   return (
-    <Card>
-      <form onSubmit={save}>
-        <CardContent className="space-y-5 pt-5">
-          <Field label="Which best describes you?" htmlFor="user-type">
-            <Select id="user-type" value={userType} onChange={(e) => setUserType(e.target.value)}>
-              <option value="">Prefer not to say</option>
-              {USER_TYPES.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <fieldset className="space-y-2">
-            <legend className="mb-1.5 text-[13px] font-medium">What would you like help with?</legend>
+    <form onSubmit={save}>
+      <div className="space-y-6">
+        <Field label="Which best describes you?" htmlFor="user-type" className="sm:max-w-[calc(50%-0.5rem)]">
+          <Select id="user-type" value={userType} onChange={(e) => setUserType(e.target.value)}>
+            <option value="">Prefer not to say</option>
+            {USER_TYPES.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <fieldset className="space-y-1.5">
+          <legend className="mb-1.5 text-[13px] font-medium">What would you like help with?</legend>
+          <div className="-mx-2 grid gap-x-4 sm:grid-cols-2">
             {MAIN_GOALS.map((g) => {
               const on = goals.includes(g.id);
               return (
                 <label
                   key={g.id}
                   className={cn(
-                    'flex min-h-10 cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-sm transition-colors',
-                    on ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent/50'
+                    'flex min-h-10 cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors hover:bg-foreground/[0.025]',
+                    on ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
                   <input
                     type="checkbox"
                     checked={on}
                     onChange={() => setGoals((prev) => (on ? prev.filter((x) => x !== g.id) : [...prev, g.id]))}
-                    className="size-4 accent-[var(--primary)]"
+                    className="size-4 shrink-0 accent-[var(--brand)]"
                   />
                   {g.label}
                 </label>
               );
             })}
-          </fieldset>
-        </CardContent>
-        <CardFooter className="justify-end">
-          <Button type="submit" disabled={!dirty} loading={saving}>
-            Save changes
-          </Button>
-        </CardFooter>
-      </form>
-    </Card>
+          </div>
+        </fieldset>
+      </div>
+      <SaveFooter dirty={dirty} saving={saving} />
+    </form>
   );
 }
 
@@ -326,7 +328,7 @@ export default function SettingsPage() {
     mounted && (theme === 'light' || theme === 'dark' || theme === 'system') ? theme : 'system';
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
       <PageHeader title="Settings" description="Your details, how things look, and your account." />
 
       <div className="divide-y divide-border border-t border-border">
@@ -334,59 +336,57 @@ export default function SettingsPage() {
           title="About you"
           description="We show your name in the menu. Your income helps us work out how much you're saving."
         >
-          <Card>
-            <form onSubmit={handleSaveProfile}>
-              <CardContent className="space-y-5 pt-5">
-                <div className="flex items-center gap-3">
-                  <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[13px] font-semibold text-primary">
-                    {initials(profileForm.displayName)}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-foreground">
-                      {profileForm.displayName.trim() || 'Add your name'}
-                    </p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {sandbox ? 'Demo account' : user?.email}
-                    </p>
-                  </div>
+          <form onSubmit={handleSaveProfile}>
+            <div className="space-y-6">
+              <div className="flex items-center gap-3">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand/10 text-[13px] font-semibold text-brand">
+                  {initials(profileForm.displayName)}
                 </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="Your name" htmlFor="display-name">
-                    <Input
-                      id="display-name"
-                      autoComplete="name"
-                      maxLength={60}
-                      placeholder="Your name"
-                      value={profileForm.displayName}
-                      onChange={(e) => setProfileForm((f) => ({ ...f, displayName: e.target.value }))}
-                    />
-                  </Field>
-                  <Field
-                    label="Money in each month"
-                    htmlFor="monthly-income"
-                    hint={`Your take-home pay in ${savedPrefsForm?.currency ?? prefsForm.currency}, after tax.`}
-                  >
-                    <Input
-                      id="monthly-income"
-                      type="number"
-                      inputMode="decimal"
-                      min={0}
-                      step="any"
-                      placeholder="85000"
-                      className="tabular"
-                      value={profileForm.monthlyIncome}
-                      onChange={(e) => setProfileForm((f) => ({ ...f, monthlyIncome: e.target.value }))}
-                    />
-                  </Field>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {profileForm.displayName.trim() || 'Add your name'}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {sandbox ? 'Demo account' : user?.email}
+                  </p>
                 </div>
-              </CardContent>
-              <SaveFooter
-                hint="You can leave income empty if you'd rather not say."
-                dirty={profileDirty}
-                saving={savingProfile}
-              />
-            </form>
-          </Card>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Your name" htmlFor="display-name">
+                  <Input
+                    id="display-name"
+                    autoComplete="name"
+                    maxLength={60}
+                    placeholder="Your name"
+                    value={profileForm.displayName}
+                    onChange={(e) => setProfileForm((f) => ({ ...f, displayName: e.target.value }))}
+                  />
+                </Field>
+                <Field
+                  label="Money in each month"
+                  htmlFor="monthly-income"
+                  hint={`Your take-home pay in ${savedPrefsForm?.currency ?? prefsForm.currency}, after tax.`}
+                >
+                  <Input
+                    id="monthly-income"
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step="any"
+                    placeholder="85000"
+                    className="tabular"
+                    value={profileForm.monthlyIncome}
+                    onChange={(e) => setProfileForm((f) => ({ ...f, monthlyIncome: e.target.value }))}
+                  />
+                </Field>
+              </div>
+            </div>
+            <SaveFooter
+              hint="You can leave income empty if you'd rather not say."
+              dirty={profileDirty}
+              saving={savingProfile}
+            />
+          </form>
         </Section>
 
         {saved && (
@@ -411,72 +411,68 @@ export default function SettingsPage() {
           description="Your currency, your time zone, and the language the assistant talks to you in."
           delay={40}
         >
-          <Card>
-            <form onSubmit={handleSavePrefs}>
-              <CardContent className="grid gap-4 pt-5 sm:grid-cols-2">
-                <Field label="Currency" htmlFor="currency">
-                  <Select
-                    id="currency"
-                    value={prefsForm.currency}
-                    onChange={(e) => setPrefsForm((f) => ({ ...f, currency: e.target.value }))}
-                  >
-                    {CURRENCIES.map((c) => (
-                      <option key={c.value} value={c.value}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field label="Time zone" htmlFor="timezone" hint="So expenses land on the right day.">
-                  <Select
-                    id="timezone"
-                    value={prefsForm.timezone}
-                    onChange={(e) => setPrefsForm((f) => ({ ...f, timezone: e.target.value }))}
-                  >
-                    {TIMEZONES.map((t) => (
-                      <option key={t.value} value={t.value}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field label="Language" htmlFor="language" className="sm:col-span-2 sm:max-w-[calc(50%-0.5rem)]">
-                  <Select
-                    id="language"
-                    value={prefsForm.language}
-                    onChange={(e) => setPrefsForm((f) => ({ ...f, language: e.target.value }))}
-                  >
-                    {LANGUAGES.map((l) => (
-                      <option key={l.value} value={l.value}>
-                        {l.label}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              </CardContent>
-              <SaveFooter hint="Changes apply everywhere in the app." dirty={prefsDirty} saving={savingPrefs} />
-            </form>
-          </Card>
+          <form onSubmit={handleSavePrefs}>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Currency" htmlFor="currency">
+                <Select
+                  id="currency"
+                  value={prefsForm.currency}
+                  onChange={(e) => setPrefsForm((f) => ({ ...f, currency: e.target.value }))}
+                >
+                  {CURRENCIES.map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Time zone" htmlFor="timezone" hint="So expenses land on the right day.">
+                <Select
+                  id="timezone"
+                  value={prefsForm.timezone}
+                  onChange={(e) => setPrefsForm((f) => ({ ...f, timezone: e.target.value }))}
+                >
+                  {TIMEZONES.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Language" htmlFor="language" className="sm:col-span-2 sm:max-w-[calc(50%-0.5rem)]">
+                <Select
+                  id="language"
+                  value={prefsForm.language}
+                  onChange={(e) => setPrefsForm((f) => ({ ...f, language: e.target.value }))}
+                >
+                  {LANGUAGES.map((l) => (
+                    <option key={l.value} value={l.value}>
+                      {l.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+            <SaveFooter hint="Changes apply everywhere in the app." dirty={prefsDirty} saving={savingPrefs} />
+          </form>
         </Section>
 
         <Section title="Look and feel" description="Pick light or dark, or match your device." delay={80}>
-          <Card>
-            <CardContent className="flex flex-col gap-3 pt-5 sm:flex-row sm:items-center sm:justify-between">
-              <div className="space-y-0.5">
-                <p className="text-sm font-medium text-foreground">Theme</p>
-                <p className="text-[13px] text-muted-foreground">Remembered on this device.</p>
-              </div>
-              <Segmented<ThemeChoice>
-                value={themeValue}
-                onChange={setTheme}
-                options={[
-                  { value: 'light', label: <><Sun aria-hidden />Light</> },
-                  { value: 'dark', label: <><Moon aria-hidden />Dark</> },
-                  { value: 'system', label: <><Monitor aria-hidden />System</> },
-                ]}
-              />
-            </CardContent>
-          </Card>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium text-foreground">Theme</p>
+              <p className="text-[13px] text-muted-foreground">Remembered on this device.</p>
+            </div>
+            <Segmented<ThemeChoice>
+              value={themeValue}
+              onChange={setTheme}
+              options={[
+                { value: 'light', label: <><Sun aria-hidden />Light</> },
+                { value: 'dark', label: <><Moon aria-hidden />Dark</> },
+                { value: 'system', label: <><Monitor aria-hidden />System</> },
+              ]}
+            />
+          </div>
         </Section>
 
         <Section
@@ -484,63 +480,57 @@ export default function SettingsPage() {
           description={sandbox ? "You're trying SpendWise with sample data." : 'The email you sign in with.'}
           delay={120}
         >
-          <Card>
-            {sandbox ? (
-              <>
-                <CardContent className="space-y-1 pt-5">
-                  <p className="text-sm font-medium text-foreground">You&apos;re in demo mode</p>
-                  <p className="text-[13px] text-muted-foreground">
-                    Everything here is saved only in this browser. Create a free account to keep your data and use
-                    it on any device.
-                  </p>
-                </CardContent>
-                <CardFooter className="flex-wrap justify-end gap-2 rounded-b-xl bg-muted/40">
-                  <Button variant="ghost" onClick={handleSignOut} loading={signingOut}>
-                    <LogOut aria-hidden />
-                    Leave demo
-                  </Button>
-                  <a
-                    href="/login"
-                    className={buttonVariants()}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      void handleSignOut();
-                    }}
-                  >
-                    Create an account
-                  </a>
-                </CardFooter>
-              </>
-            ) : (
-              <>
-                <CardContent className="pt-5">
-                  <Field label="Email" htmlFor="account-email">
-                    <Input id="account-email" value={user?.email ?? ''} readOnly disabled />
-                  </Field>
-                </CardContent>
-                <CardFooter className="justify-between gap-3 rounded-b-xl bg-muted/40">
-                  <p className="text-xs text-muted-foreground">You&apos;ll need to sign in again on this device.</p>
-                  <Button variant="outline" onClick={handleSignOut} loading={signingOut}>
-                    <LogOut aria-hidden />
-                    Sign out
-                  </Button>
-                </CardFooter>
-              </>
-            )}
-          </Card>
+          {sandbox ? (
+            <div className="space-y-6">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">You&apos;re in demo mode</p>
+                <p className="text-[13px] text-muted-foreground">
+                  Everything here is saved only in this browser. Create a free account to keep your data and use it on
+                  any device.
+                </p>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="ghost" onClick={handleSignOut} loading={signingOut}>
+                  <LogOut aria-hidden />
+                  Leave demo
+                </Button>
+                <a
+                  href="/login"
+                  className={buttonVariants()}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void handleSignOut();
+                  }}
+                >
+                  Create an account
+                </a>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <Field label="Email" htmlFor="account-email" className="sm:max-w-[calc(50%-0.5rem)]">
+                <Input id="account-email" value={user?.email ?? ''} readOnly disabled />
+              </Field>
+              <div className="flex items-center justify-between gap-3 pt-6">
+                <p className="text-xs text-muted-foreground">You&apos;ll need to sign in again on this device.</p>
+                <Button variant="outline" onClick={handleSignOut} loading={signingOut}>
+                  <LogOut aria-hidden />
+                  Sign out
+                </Button>
+              </div>
+            </div>
+          )}
         </Section>
 
         <Section title="Delete account" description="Things that can't be undone." delay={160}>
-          <Card className="border-destructive/30">
-            <CardContent className="space-y-1 pt-5">
-              <p className="text-sm font-medium text-destructive">Delete your account</p>
-              <p className="text-[13px] text-muted-foreground">
-                {sandbox
-                  ? "Demo data lives only in this browser. To remove it for good, clear this site's data in your browser settings."
-                  : "You can't delete your account from here yet. To remove your account and all of its data for good, please contact support."}
-              </p>
-            </CardContent>
-          </Card>
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-destructive">Delete your account</p>
+            <p className="max-w-lg text-[13px] text-muted-foreground">
+              {sandbox
+                ? "Demo data lives only in this browser. To remove it for good, clear this site's data in your browser settings."
+                : "You can't delete your account from here yet. To remove your account and all of its data for good, please contact support."}
+            </p>
+          </div>
         </Section>
       </div>
     </div>

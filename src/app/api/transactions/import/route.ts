@@ -63,8 +63,15 @@ export const POST = handle(async (request: NextRequest) => {
     )
   );
 
-  const placeholders = ids.map(() => '?').join(',');
-  const { results } = await db.prepare(`${TRANSACTION_SELECT} WHERE t.id IN (${placeholders})`).bind(...ids).all();
-  const byId = new Map(results.map((r) => [r.id as string, toTransaction(r)]));
+  // D1 allows at most 100 bound parameters per query, so read the rows back in chunks.
+  const byId = new Map<string, ReturnType<typeof toTransaction>>();
+  for (let i = 0; i < ids.length; i += 90) {
+    const chunk = ids.slice(i, i + 90);
+    const { results } = await db
+      .prepare(`${TRANSACTION_SELECT} WHERE t.id IN (${chunk.map(() => '?').join(',')})`)
+      .bind(...chunk)
+      .all();
+    for (const r of results) byId.set(r.id as string, toTransaction(r));
+  }
   return NextResponse.json({ transactions: ids.map((id) => byId.get(id)!) }, { status: 201 });
 });

@@ -6,6 +6,14 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
   "ai": { "binding": "AI" },
+  // Background statement imports read the uploaded file from R2 and write to the app's D1.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "spendwise-db", "database_id": "58287c27-252d-4e48-b86f-468a7adcfabf" }
+  ],
+  "r2_buckets": [{ "binding": "STATEMENTS", "bucket_name": "spendwise-statements" }],
+  "workflows": [
+    { "name": "spendwise-statement-import", "binding": "STATEMENT_IMPORT", "class_name": "StatementImportWorkflow" }
+  ],
   // Per-client limit (keyed by user id or IP, forwarded by the Next.js server).
   "ratelimits": [
     {

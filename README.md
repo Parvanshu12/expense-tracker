@@ -11,7 +11,19 @@ Runs entirely on Cloudflare:
 | **App** — Next.js 16 on Workers via [OpenNext](https://opennext.js.org/cloudflare) | UI, API routes, sign-in |
 | **Cloudflare D1** (`spendwise-db`) | Users, sessions, transactions, budgets, goals |
 | **`spendwise-ai` worker** — Workers AI (Cloudflare-hosted models only) | Chat entry, statements and bill photos (Llama 4 Scout, JSON mode + vision), money coach (Llama 3.3 70B, streamed), voice (Whisper), PDF reading (`toMarkdown`) |
+| **Cloudflare R2** (`spendwise-statements`) | Uploaded bank statements for background imports |
+| **Cloudflare Workflows** (`spendwise-statement-import`) | Reads big statements in the background, step by step with retries; keeps going if the user closes the page |
 | **Workers rate limiting** | Sign-in attempts and AI calls |
+
+### Bank statements
+
+Drop a PDF, Excel or CSV statement into the chat (or attach it). Signed-in users get a background import: the file goes to R2 and a Workflow reads it while the chat shows live progress ("Found 545 transactions on 78 pages", "Sorted payees 1–50: Blinkit → Groceries …"), so the page can be closed.
+
+- **Reading:** regular layouts (UPI apps such as Navi, PhonePe, Paytm) are read by code (`src/lib/ai/statement-parser.ts`), so amounts, dates and money-in/money-out come straight from the file. Other layouts fall back to Workers AI page by page.
+- **Sorting:** the AI only sorts payee names into categories.
+- **Card bills and wallet top-ups** are left out so nothing counts twice.
+- **Duplicates** already recorded are skipped.
+- **Questions:** you're asked once per person (biggest first), with a "Keep all as sorted" option. Your answers are remembered for the next import.
 
 See [PROJECT.md](./PROJECT.md) for the full architecture.
 
@@ -62,7 +74,7 @@ cd workers/spendwise-ai && npm install && npx wrangler deploy
 | Command | Description |
 |---|---|
 | `npm run dev` | Local dev server with Cloudflare bindings |
-| `npm test` | Unit tests for `src/lib/calculations/finance.ts` and the offline parser |
+| `npm test` | Unit tests (`tests/*.test.mjs`): finance maths, offline parser, duplicate matching, statement reader |
 | `npm run lint` | ESLint |
 | `npm run preview` | Build with OpenNext and run in the Workers runtime locally |
 | `npm run deploy` | Build with OpenNext and deploy to Cloudflare |

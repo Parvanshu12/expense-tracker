@@ -17,6 +17,8 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Uploaded bank statements, read by the spendwise-ai worker's import Workflow.
+  "r2_buckets": [{ "binding": "STATEMENTS", "bucket_name": "spendwise-statements" }],
   // Sign-in attempts per IP (approximate, per Cloudflare location).
   "ratelimits": [
     {

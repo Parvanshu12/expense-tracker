@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Menu, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Kbd } from '@/components/ui/kbd';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { navigationGroups } from './sidebar';
 
@@ -39,28 +38,29 @@ export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
   }, [router]);
 
   return (
-    <header className="no-print sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-xl md:px-6">
+    <header className="no-print sticky top-0 z-30 flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-card/85 px-4 backdrop-blur-xl md:px-6">
       <div className="flex min-w-0 items-center gap-2">
         <button
           onClick={onMenuClick}
-          className="-ml-1 rounded-md p-1.5 text-muted-foreground hover:bg-accent lg:hidden"
+          className="-ml-1 rounded-md p-1.5 text-muted-foreground hover:bg-foreground/[0.05] lg:hidden"
           aria-label="Open menu"
         >
           <Menu className="size-4" />
         </button>
         <span className="truncate text-[13px] text-muted-foreground">
-          SpendWise <span className="px-1 text-subtle">/</span>
+          <span className="hidden sm:inline">
+            SpendWise <span className="px-1 text-subtle">/</span>
+          </span>
           <span className="text-foreground">{titleFor(pathname)}</span>
         </span>
       </div>
 
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1">
         {pathname !== '/add-expense' && (
-          <Link href="/add-expense">
+          <Link href="/add-expense" className="lg:hidden">
             <Button size="sm" className="gap-1.5">
               <Plus />
-              <span className="hidden sm:inline">Add spending</span>
-              <Kbd className="ml-0.5 hidden sm:inline-flex">N</Kbd>
+              Add
             </Button>
           </Link>
         )}

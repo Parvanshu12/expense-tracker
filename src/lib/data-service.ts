@@ -252,6 +252,25 @@ export const DataService = {
     return created;
   },
 
+  /** Same change to many transactions (e.g. one answer for every payment to a person). */
+  async updateTransactions(
+    ids: string[],
+    changes: Pick<Partial<Transaction>, 'category_id' | 'essentiality' | 'review_status' | 'user_corrected_classification' | 'notes'>
+  ): Promise<void> {
+    if (ids.length === 0) return;
+    if (!isSandbox()) {
+      await api('/api/transactions/bulk', { method: 'PATCH', body: { ids, changes } });
+      return;
+    }
+    const wanted = new Set(ids);
+    const stamp = new Date().toISOString();
+    const current = readLocal<Transaction[]>(LOCAL_STORAGE_TRANSACTIONS, []);
+    writeLocal(
+      LOCAL_STORAGE_TRANSACTIONS,
+      current.map((t) => (wanted.has(t.id) ? { ...t, ...changes, updated_at: stamp } : t))
+    );
+  },
+
   async updateTransaction(id: string, updates: Partial<Transaction>): Promise<Transaction | null> {
     if (!isSandbox()) {
       return (

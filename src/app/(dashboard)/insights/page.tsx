@@ -4,7 +4,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Sparkles, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
+import { Money } from '@/components/ui/money';
+import { Metric, MetricStrip } from '@/components/ui/metric';
+import { Section } from '@/components/ui/section';
 import { PageHeader } from '@/components/ui/page-header';
 import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -25,7 +28,7 @@ import {
   toLocalDateString,
   type DashboardPeriod,
 } from '@/lib/calculations/finance';
-import { cn, formatCurrency } from '@/lib/utils';
+import { formatCurrency } from '@/lib/utils';
 import type { Budget, Category, Transaction } from '@/types/database';
 
 type Scope = Extract<DashboardPeriod, 'this_month' | 'last_3_months' | 'all_time'>;
@@ -244,18 +247,30 @@ export default function InsightsPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
-        <Skeleton className="h-8 w-48" />
-        <div className="grid gap-4 lg:grid-cols-3">
-          <Skeleton className="h-[560px] lg:col-span-2" />
-          <Skeleton className="h-[560px]" />
+      <div className="space-y-10">
+        <div className="space-y-3">
+          <Skeleton className="h-10 w-64" />
+          <Skeleton className="h-4 w-96 max-w-full" />
+        </div>
+        <div className="grid gap-12 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]">
+          <Skeleton className="h-[600px] rounded-2xl" />
+          <div className="space-y-6">
+            <Skeleton className="h-28" />
+            <Skeleton className="h-48" />
+          </div>
         </div>
       </div>
     );
   }
 
+  const types = [
+    { label: 'Essential', pct: essentiality.essentialPct, value: essentiality.essential, color: 'var(--essential)' },
+    { label: 'Could trim', pct: essentiality.optimizablePct, value: essentiality.optimizable, color: 'var(--trim)' },
+    { label: 'Optional', pct: essentiality.discretionaryPct, value: essentiality.discretionary, color: 'var(--optional)' },
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
       <PageHeader
         title="Ask for advice"
         description="Ask anything about your money in your own words. Answers use only your own numbers."
@@ -276,13 +291,14 @@ export default function InsightsPage() {
           description="Add a few expenses and the coach will have something to work with."
         />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid items-start gap-12 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]">
           {/* Chat */}
-          <Card className="flex h-[600px] flex-col overflow-hidden lg:col-span-2 animate-rise">
-            <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          <Card className="flex h-[620px] flex-col overflow-hidden animate-rise">
+            <div className="flex h-12 items-center justify-between border-b border-border pl-5 pr-3">
               <div className="flex items-center gap-2 text-sm font-medium">
-                <Sparkles className="size-4 text-primary" /> Money coach
-                <span className="text-xs font-normal text-muted-foreground">· Workers AI</span>
+                <span className="size-1.5 rounded-full bg-brand" />
+                Money coach
+                <span className="text-xs font-normal text-subtle">{SCOPE_LABEL[scope]}</span>
               </div>
               {messages.length > 0 && (
                 <Button
@@ -299,46 +315,51 @@ export default function InsightsPage() {
               )}
             </div>
 
-            <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
+            <div ref={scrollRef} className="flex-1 space-y-6 overflow-y-auto px-5 py-6 sm:px-6">
               {messages.length === 0 ? (
-                <div className="flex h-full flex-col items-center justify-center gap-5 text-center">
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium">What do you want to know?</p>
+                <div className="flex h-full flex-col justify-end gap-6">
+                  <div className="space-y-1.5">
+                    <p className="font-display text-[28px] leading-[1.05] tracking-[-0.01em]">What do you want to know?</p>
                     <p className="text-[13px] text-muted-foreground">
-                      {SCOPE_LABEL[scope]} · {scoped.length} transactions · {formatCurrency(summary.totalExpenses)} spent
+                      {SCOPE_LABEL[scope]} · {scoped.length} {scoped.length === 1 ? 'transaction' : 'transactions'} ·{' '}
+                      <Money amount={summary.totalExpenses} size="sm" decimals={false} tone="muted" className="text-[13px]" /> spent
                     </p>
                   </div>
-                  <div className="flex max-w-md flex-wrap justify-center gap-2">
+                  <ul className="-mx-2 divide-y divide-border/70 border-t border-border/70">
                     {SUGGESTIONS.map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => void ask(s)}
-                        className="rounded-full border border-border bg-card px-3 py-1.5 text-[13px] text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground"
-                      >
-                        {s}
-                      </button>
+                      <li key={s}>
+                        <button
+                          type="button"
+                          onClick={() => void ask(s)}
+                          className="group flex w-full items-center justify-between gap-3 rounded-lg px-2 py-2.5 text-left text-sm text-muted-foreground transition-colors hover:bg-foreground/[0.025] hover:text-foreground"
+                        >
+                          {s}
+                          <ArrowUp className="size-3.5 shrink-0 rotate-45 text-subtle transition-colors group-hover:text-brand" />
+                        </button>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 </div>
               ) : (
-                messages.map((m) => (
-                  <div key={m.id} className={cn('flex animate-rise', m.role === 'user' ? 'justify-end' : 'justify-start')}>
-                    <div
-                      className={cn(
-                        'max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
-                        m.role === 'user'
-                          ? 'rounded-br-md bg-primary text-primary-foreground'
-                          : 'rounded-bl-md border border-border bg-muted/50 text-foreground'
-                      )}
-                    >
-                      {m.content}
-                      {m.pending && (
-                        <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse rounded-sm bg-foreground/60" />
-                      )}
+                messages.map((m) =>
+                  m.role === 'user' ? (
+                    <div key={m.id} className="flex justify-end animate-rise">
+                      <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground">
+                        {m.content}
+                      </div>
                     </div>
-                  </div>
-                ))
+                  ) : (
+                    <div key={m.id} className="flex gap-3 animate-rise">
+                      <Sparkles className="mt-[3px] size-3.5 shrink-0 text-brand" aria-hidden />
+                      <div className="min-w-0 max-w-[92%] whitespace-pre-wrap text-sm leading-[1.7] text-foreground">
+                        {m.content}
+                        {m.pending && (
+                          <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse rounded-sm bg-brand/70" />
+                        )}
+                      </div>
+                    </div>
+                  )
+                )
               )}
             </div>
 
@@ -347,9 +368,9 @@ export default function InsightsPage() {
                 e.preventDefault();
                 void ask(question);
               }}
-              className="border-t border-border p-3"
+              className="p-3"
             >
-              <div className="flex items-center gap-2 rounded-xl border border-input bg-card px-3 py-1.5 focus-within:border-foreground/30 focus-within:ring-4 focus-within:ring-foreground/[0.05]">
+              <div className="flex items-center gap-2 rounded-xl border border-input bg-card px-3 py-1.5 shadow-card transition-[border-color,box-shadow] focus-within:border-foreground/30 focus-within:ring-4 focus-within:ring-foreground/[0.05]">
                 <input
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
@@ -365,89 +386,101 @@ export default function InsightsPage() {
             </form>
           </Card>
 
-          {/* Side panel */}
-          <div className="space-y-4">
-            <Card className="animate-rise" style={{ animationDelay: '60ms' }}>
-              <CardHeader>
-                <CardTitle>{SCOPE_LABEL[scope]} at a glance</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <dl className="grid grid-cols-2 gap-4">
-                  <div>
-                    <dt className="text-xs text-muted-foreground">Spent</dt>
-                    <dd className="tabular text-lg font-semibold tracking-tight">{formatCurrency(summary.totalExpenses)}</dd>
+          {/* Side */}
+          <div className="space-y-10">
+            <div className="animate-rise" style={{ animationDelay: '60ms' }}>
+              <Section title={`${SCOPE_LABEL[scope]} at a glance`}>
+                <div className="border-y border-border py-4">
+                  <MetricStrip className="sm:grid-cols-2">
+                    <Metric label="Spent" value={<Money amount={summary.totalExpenses} size="lg" decimals={false} />} />
+                    <Metric
+                      label="Kept"
+                      value={
+                        <Money
+                          amount={summary.actualSavings}
+                          size="lg"
+                          decimals={false}
+                          tone={summary.actualSavings < 0 ? 'danger' : 'default'}
+                        />
+                      }
+                      hint={
+                        summary.totalIncome > 0
+                          ? `${Math.round((summary.actualSavings / summary.totalIncome) * 100)}% of what came in`
+                          : undefined
+                      }
+                    />
+                  </MetricStrip>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex h-2 overflow-hidden rounded-full bg-foreground/[0.05]">
+                    {types.map((t) => (
+                      <span key={t.label} style={{ width: `${t.pct}%`, background: t.color }} />
+                    ))}
                   </div>
-                  <div>
-                    <dt className="text-xs text-muted-foreground">Kept</dt>
-                    <dd className={cn('tabular text-lg font-semibold tracking-tight', summary.actualSavings < 0 && 'text-destructive')}>
-                      {formatCurrency(summary.actualSavings)}
-                    </dd>
-                  </div>
-                </dl>
-                <div className="space-y-2">
-                  <div className="flex h-2 overflow-hidden rounded-full bg-muted">
-                    <div style={{ width: `${essentiality.essentialPct}%`, background: 'var(--chart-1)' }} />
-                    <div style={{ width: `${essentiality.optimizablePct}%`, background: 'var(--chart-2)' }} />
-                    <div style={{ width: `${essentiality.discretionaryPct}%`, background: 'var(--chart-4)' }} />
-                  </div>
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>Essential {Math.round(essentiality.essentialPct)}%</span>
-                    <span>Trim {Math.round(essentiality.optimizablePct)}%</span>
-                    <span>Optional {Math.round(essentiality.discretionaryPct)}%</span>
-                  </div>
+                  <dl className="space-y-2">
+                    {types.map((t) => (
+                      <div key={t.label} className="flex items-center justify-between gap-3 text-[13px]">
+                        <dt className="flex items-center gap-2">
+                          <span className="size-2 rounded-full" style={{ background: t.color }} />
+                          {t.label}
+                          <span className="text-xs text-subtle">{Math.round(t.pct)}%</span>
+                        </dt>
+                        <dd>
+                          <Money amount={t.value} size="sm" decimals={false} className="text-[13px]" />
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
                 </div>
                 {categories[0] && (
-                  <p className="text-[13px] text-muted-foreground">
+                  <p className="text-[13px] leading-relaxed text-muted-foreground">
                     Biggest category: <span className="text-foreground">{categories[0].categoryName}</span>,{' '}
-                    <span className="tabular">{formatCurrency(categories[0].amount)}</span> ({categories[0].percentage.toFixed(0)}%).
+                    <Money amount={categories[0].amount} size="sm" decimals={false} className="text-[13px]" /> (
+                    {categories[0].percentage.toFixed(0)}%).
                   </p>
                 )}
-              </CardContent>
-            </Card>
+              </Section>
+            </div>
 
-            <Card className="animate-rise" style={{ animationDelay: '120ms' }}>
-              <CardHeader>
-                <CardTitle>What if you trimmed?</CardTitle>
-                <CardDescription>Move the sliders to see what you&apos;d keep.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                {[
-                  { label: 'Could-trim spending', base: essentiality.optimizable, value: optTrimPct, set: setOptTrimPct },
-                  { label: 'Optional spending', base: essentiality.discretionary, value: discTrimPct, set: setDiscTrimPct },
-                ].map((s) => (
-                  <div key={s.label} className="space-y-2">
-                    <div className="flex items-baseline justify-between text-[13px]">
-                      <span>{s.label}</span>
-                      <span className="tabular text-muted-foreground">
-                        −{s.value}% of {formatCurrency(s.base)}
-                      </span>
+            <div className="animate-rise" style={{ animationDelay: '120ms' }}>
+              <Section divided title="What if you trimmed?" description="Move the sliders to see what you’d keep.">
+                <div className="space-y-5">
+                  {[
+                    { label: 'Could-trim spending', base: essentiality.optimizable, value: optTrimPct, set: setOptTrimPct },
+                    { label: 'Optional spending', base: essentiality.discretionary, value: discTrimPct, set: setDiscTrimPct },
+                  ].map((sl) => (
+                    <div key={sl.label} className="space-y-2">
+                      <div className="flex items-baseline justify-between gap-3 text-[13px]">
+                        <span>{sl.label}</span>
+                        <span className="tabular text-muted-foreground">
+                          −{sl.value}% of <Money amount={sl.base} size="sm" decimals={false} tone="muted" className="text-[13px]" />
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={sl.value}
+                        onChange={(e) => sl.set(Number(e.target.value))}
+                        className="w-full"
+                        style={{ accentColor: 'var(--brand)' }}
+                        aria-label={`${sl.label} reduction`}
+                      />
                     </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      step={5}
-                      value={s.value}
-                      onChange={(e) => s.set(Number(e.target.value))}
-                      className="w-full"
-                      style={{ accentColor: 'var(--foreground)' }}
-                      aria-label={`${s.label} reduction`}
-                    />
-                  </div>
-                ))}
-                <div className="rounded-lg border border-border bg-muted/40 p-3">
-                  <div className="text-xs text-muted-foreground">You&apos;d keep</div>
-                  <div className="tabular text-2xl font-semibold tracking-tight">
-                    {formatCurrency(potential.monthlyPotentialSavings)}
-                  </div>
+                  ))}
+                </div>
+                <div className="space-y-1.5 border-t border-border pt-4">
+                  <div className="text-[13px] text-muted-foreground">You&apos;d keep</div>
+                  <Money amount={potential.monthlyPotentialSavings} size="xl" tone="brand" />
                   {scope === 'this_month' && (
                     <div className="text-xs text-muted-foreground">
-                      ≈ <span className="tabular">{formatCurrency(potential.annualPotentialSavings)}</span> a year
+                      about <Money amount={potential.annualPotentialSavings} size="sm" decimals={false} tone="muted" className="text-xs" /> a year
                     </div>
                   )}
                 </div>
-              </CardContent>
-            </Card>
+              </Section>
+            </div>
           </div>
         </div>
       )}
