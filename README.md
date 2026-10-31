@@ -10,7 +10,7 @@ Runs entirely on Cloudflare:
 |---|---|
 | **App** — Next.js 16 on Workers via [OpenNext](https://opennext.js.org/cloudflare) | UI, API routes, sign-in |
 | **Cloudflare D1** (`spendwise-db`) | Users, sessions, transactions, budgets, goals |
-| **`spendwise-ai` worker** — Workers AI | Expense extraction (Llama 3.1 8B, JSON mode), money coach (Llama 3.3 70B, streamed), voice transcription (Whisper) |
+| **`spendwise-ai` worker** — Workers AI (Cloudflare-hosted models only) | Chat entry, statements and bill photos (Llama 4 Scout, JSON mode + vision), money coach (Llama 3.3 70B, streamed), voice (Whisper), PDF reading (`toMarkdown`) |
 | **Workers rate limiting** | Sign-in attempts and AI calls |
 
 See [PROJECT.md](./PROJECT.md) for the full architecture.

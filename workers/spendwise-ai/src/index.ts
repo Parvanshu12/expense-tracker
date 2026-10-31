@@ -2,6 +2,7 @@
  * SpendWise AI worker — Workers AI endpoints for the SpendWise web app.
  *
  *   POST /v1/entry       chat message -> several transactions + questions for missing amounts
+ *   POST /v1/receipt     photo of a bill, receipt or item -> transactions (vision)
  *   POST /v1/statement   bank statement (PDF/Excel/CSV) -> transactions
  *   POST /v1/extract     natural-language expense -> structured transaction (JSON mode)
  *   POST /v1/coach       money-coach chat grounded in figures the app computed (SSE stream)
@@ -483,6 +484,142 @@ async function handleEntry(request: Request, env: Env): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
+// Photos: bills, receipts, price tags, products -> transactions (Llama 4 Scout vision)
+// ---------------------------------------------------------------------------
+
+interface ReceiptRequest {
+	/** Base64 image, no data: prefix. */
+	image: string;
+	mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
+	/** Optional caption the user typed with the photo. */
+	note?: string;
+	today: string;
+	timezone?: string;
+	categories: { expense: string[]; income: string[] };
+	profile?: EntryProfile;
+	context?: EntryContext;
+}
+
+const MAX_IMAGE_BASE64 = 4 * 1024 * 1024;
+
+function receiptSchema(categories: EntryRequest['categories']) {
+	const schema = entrySchema(categories);
+	const item = schema.properties.items.items;
+	return {
+		...schema,
+		properties: {
+			...schema.properties,
+			items: {
+				...schema.properties.items,
+				items: {
+					...item,
+					properties: {
+						...item.properties,
+						total_label: {
+							type: ['string', 'null'],
+							description: 'The exact printed label next to the amount you used ("GRAND TOTAL", "Net Amount", "MRP"), or null',
+						},
+						split_between: {
+							type: 'integer',
+							minimum: 1,
+							description: 'How many people shared this bill, including the user (1 if not split)',
+						},
+					},
+					required: [...item.required, 'total_label', 'split_between'],
+				},
+			},
+			seen: { type: 'string', description: 'One short line describing what the photo shows' },
+		},
+		required: [...schema.required, 'seen'],
+	};
+}
+
+function receiptPrompt(req: ReceiptRequest): string {
+	return `You look at a photo someone took to record spending: usually a bill, receipt, invoice, UPI/payment screenshot, price tag or the item itself. Turn it into transactions.
+${profileLines(req.profile)}
+
+Today is ${req.today} (${req.timezone ?? 'Asia/Kolkata'}). Default currency INR.
+Expense categories: ${req.categories.expense.join(', ')}.
+Income categories: ${req.categories.income.join(', ')}.
+${req.note ? `The user added this note with the photo: "${req.note}". Follow it (e.g. "paid half" means half the total; "this was yesterday" sets the date).` : ''}
+${req.context ? `Spending so far this month (context for feedback only): ${JSON.stringify(req.context)}` : ''}
+
+Rules:
+- A bill, receipt or invoice is ONE transaction for the final amount actually paid (grand total after tax, service charge and discounts), not one per line item. If the photo shows several separate bills, one transaction each.
+- description: short and human, naming what it was and where ("Dinner at Toit", "Groceries at DMart", "Petrol at Indian Oil"). merchant: the business name printed on the bill, else null.
+- purchase_date: the date printed on the bill as YYYY-MM-DD; if none is visible, today.
+- payment_method only if printed (UPI, Credit Card, Debit Card, Cash, Net Banking, Other), else null.
+- category and essentiality from the merchant and the items (restaurant -> Food & Dining, supermarket -> Groceries, pharmacy -> Healthcare, fuel -> Transportation, electronics/clothes -> Shopping, electricity/phone bill -> Utilities ...). Restaurants, cafes and bars are "optimizable", or "discretionary" for a night out with drinks; groceries, medicine and bills are "essential".
+- amount: copy the final total exactly as printed, and put the label printed next to it in total_label ("GRAND TOTAL", "Total", "Net Amount", "Amount Paid", "MRP" ...). Never add up lines or calculate a total yourself. If no final total is visible or readable (blurry, cut off, covered), amount and total_label are null and needs is "amount" with a question like "I couldn't see the total on the DMart bill. How much did you pay?".
+- split_between: if the note says the bill was split, the number of people sharing it including the user ("with 2 friends" = 3, "split with my wife" = 2); otherwise 1. Keep amount as the full printed total; the app works out the share.
+- A photo of an item or a price tag: one transaction describing the item. Use the price only if a price is clearly visible; otherwise amount null and ask "How much did you pay for the headphones?".
+- needs "category" only if you truly can't tell what kind of purchase it is; then options lists 2-4 likely categories copied exactly from the lists above.
+- If the photo has nothing to do with spending, return items [] and use reply to ask kindly for a photo of the bill or the item.
+- seen: one short line on what the photo shows ("Restaurant bill from Toit, 4 items, total ₹1,850").
+- reply: a brief friendly acknowledgement. feedback: one short, specific, warm sentence about the purchase, no numbers (or null).`;
+}
+
+async function handleReceipt(request: Request, env: Env): Promise<Response> {
+	const model =
+		(env.ALLOW_MODEL_OVERRIDE === 'true' && request.headers.get('x-model')) || env.ENTRY_MODEL;
+	const body = await readJson<ReceiptRequest>(request);
+	if (typeof body.image !== 'string' || body.image.length < 100) throw new HttpError(400, 'image is required');
+	if (body.image.length > MAX_IMAGE_BASE64) throw new HttpError(413, 'That photo is too large.');
+	if (!['image/jpeg', 'image/png', 'image/webp'].includes(body.mimeType)) {
+		throw new HttpError(400, 'Photo must be JPEG, PNG or WebP');
+	}
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(body.today ?? '')) throw new HttpError(400, 'today must be YYYY-MM-DD');
+	if (!body.categories?.expense?.length || !body.categories?.income?.length) {
+		throw new HttpError(400, 'categories.expense and categories.income are required');
+	}
+	const note = typeof body.note === 'string' ? body.note.trim().slice(0, 300) : '';
+
+	const result = await env.AI.run(model as typeof env.ENTRY_MODEL, {
+		messages: [
+			{ role: 'system', content: receiptPrompt({ ...body, note }) },
+			{
+				role: 'user',
+				content: [
+					{ type: 'text', text: note || 'Record what this photo shows.' },
+					{ type: 'image_url', image_url: { url: `data:${body.mimeType};base64,${body.image}` } },
+				],
+			},
+		],
+		response_format: { type: 'json_schema', json_schema: receiptSchema(body.categories) },
+		temperature: 0,
+		max_tokens: 1500,
+	});
+
+	const data = structuredOutput(result) as
+		| { items?: EntryItem[]; reply?: string; feedback?: string | null; seen?: string }
+		| null;
+	if (!data || typeof data !== 'object' || !Array.isArray(data.items)) {
+		throw new HttpError(502, 'Model returned no structured output');
+	}
+	data.items = (data.items as (EntryItem & { total_label?: string | null; split_between?: number })[]).map((i) => {
+		const { total_label, split_between, ...rest } = i;
+		const item: EntryItem = { ...rest, options: Array.isArray(rest.options) ? rest.options : [], needs: rest.needs ?? null };
+		// A total we can't trust (no printed total line, or out of range) becomes a question.
+		if (item.amount !== null && (!total_label || !(item.amount > 0 && item.amount < 1e8))) {
+			return { ...askForAmount(item), question: `I couldn't see the final total on this bill. How much did you pay for ${item.description.toLowerCase()}?` };
+		}
+		if (item.amount === null) return item.needs === null ? askForAmount(item) : item;
+		// Splits are arithmetic, so they happen here rather than in the model.
+		const people = Number.isInteger(split_between) && (split_between as number) > 1 ? (split_between as number) : 1;
+		if (people > 1) {
+			const total = item.amount;
+			return {
+				...item,
+				amount: Math.round((total / people) * 100) / 100,
+				description: `${item.description} (your share of ${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(total)})`,
+			};
+		}
+		return item;
+	});
+	return json({ data, model });
+}
+
+// ---------------------------------------------------------------------------
 // Bank statement import: PDF / spreadsheet / CSV -> transactions
 // ---------------------------------------------------------------------------
 
@@ -853,6 +990,8 @@ export default {
 					return await handleEntry(request, env);
 				case '/v1/statement':
 					return await handleStatement(request, env);
+				case '/v1/receipt':
+					return await handleReceipt(request, env);
 				case '/v1/extract':
 					return await handleExtract(request, env);
 				case '/v1/coach':

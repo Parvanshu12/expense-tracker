@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowUp, Mic, Square, Pencil, Undo2, FileText, RotateCcw, Paperclip, Lightbulb, ChevronDown, AlertTriangle, CircleCheck } from 'lucide-react';
+import { ArrowUp, Mic, Square, Pencil, Undo2, FileText, RotateCcw, Paperclip, Lightbulb, ChevronDown, AlertTriangle, CircleCheck, Camera, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,7 +19,7 @@ import { calculateBudgetSpent, spendingWarnings, toLocalDateString, type Spendin
 import { kindForCategory, PURCHASE_KINDS } from '@/lib/categories/kinds';
 import { cn, formatCurrency } from '@/lib/utils';
 import type { AiExtractionData, Budget, Category, EntryMethod, Essentiality, SavingsGoal, Transaction, TransactionType } from '@/types/database';
-import type { EntryContext, EntryItem, EntryProfile, EntryResponse, StatementResponse } from '@/types/entry';
+import type { EntryContext, EntryItem, EntryProfile, EntryResponse, ReceiptResponse, StatementResponse } from '@/types/entry';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -49,6 +49,12 @@ interface Message {
   text?: string;
   /** User uploaded a file. */
   attachment?: string;
+  /** Small thumbnail of a photo the user sent (data URL). */
+  photo?: string;
+  /** What the AI saw in a photo. */
+  seen?: string;
+  /** Things in a photo that look already recorded; not saved unless the user says so. */
+  duplicates?: { draft: EntryItem; matched: string; added: boolean }[];
   cards?: SavedCard[];
   /** Saved cards beyond the first few, for big imports. */
   hiddenCards?: number;
@@ -60,7 +66,7 @@ interface Message {
   offline?: boolean;
 }
 
-type PendingDraft = EntryItem & { ref: string; from: 'chat' | 'statement' };
+type PendingDraft = EntryItem & { ref: string; from: 'chat' | 'statement' | 'photo' };
 
 const EXAMPLES = [
   '450 lunch on Swiggy, 1200 petrol and 180 for sabzi',
@@ -144,6 +150,24 @@ function fileToBase64(file: Blob): Promise<string> {
   });
 }
 
+/** Shrinks a photo for upload (and a tiny thumbnail for the chat), as JPEG. */
+async function preparePhoto(file: File): Promise<{ base64: string; thumb: string }> {
+  const bitmap = await createImageBitmap(file).catch(() => null);
+  if (!bitmap) throw new Error("Couldn't open that photo. Please try a JPEG or PNG.");
+  const draw = (maxSide: number, quality: number) => {
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', quality);
+  };
+  const full = draw(1600, 0.85);
+  const thumb = draw(200, 0.7);
+  bitmap.close();
+  return { base64: full.split(',')[1] ?? '', thumb };
+}
+
 function pickAudioMimeType(): string | undefined {
   if (typeof MediaRecorder === 'undefined') return undefined;
   return ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find((t) => MediaRecorder.isTypeSupported(t));
@@ -166,7 +190,7 @@ export default function AddExpensePage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [pending, setPending] = useState<PendingDraft[]>([]);
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState<false | 'thinking' | 'listening' | 'transcribing' | 'reading'>(false);
+  const [busy, setBusy] = useState<false | 'thinking' | 'listening' | 'transcribing' | 'reading' | 'looking'>(false);
   const [today, setToday] = useState('');
   const [editing, setEditing] = useState<SavedCard | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
@@ -176,6 +200,7 @@ export default function AddExpensePage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
 
   useEffect(() => {
@@ -340,7 +365,7 @@ export default function AddExpensePage() {
     try {
       const history = messages
         .slice(-CONTEXT_MESSAGES)
-        .map((m) => ({ role: m.role, content: m.text || m.question || m.feedback || '' }))
+        .map((m) => ({ role: m.role, content: m.text || m.question || m.seen || m.feedback || (m.photo ? '[sent a photo]' : '') }))
         .filter((m) => m.content);
       const res = await fetch('/api/ai/entry', {
         method: 'POST',
@@ -471,6 +496,83 @@ export default function AddExpensePage() {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = '';
     }
+  };
+
+  // Photo of a bill, receipt, price tag or item: read with Workers AI vision.
+  const importPhoto = async (file: File) => {
+    if (busy) return;
+    const caption = input.trim();
+    setInput('');
+    let prepared: { base64: string; thumb: string };
+    try {
+      prepared = await preparePhoto(file);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't open that photo");
+      return;
+    }
+    setMessages((prev) => [...prev, { id: nextId('u'), role: 'user', photo: prepared.thumb, text: caption || undefined }]);
+    setBusy('looking');
+    try {
+      const res = await fetch('/api/ai/receipt', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          image: prepared.base64,
+          mimeType: 'image/jpeg',
+          note: caption || undefined,
+          today: toLocalDateString(),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          profile,
+          context,
+        }),
+      });
+      const data = (await res.json()) as ReceiptResponse & { error?: string };
+      if (!res.ok) throw new Error(data.error || "Couldn't read that photo");
+
+      const ready = data.items.filter((i) => i.needs === null && i.amount !== null);
+      const unclear: PendingDraft[] = data.items
+        .filter((i) => i.needs !== null || i.amount === null)
+        .map((i) => ({ ...i, ref: nextId('p'), from: 'photo' as const }));
+      // A bill that's already in the ledger (told in chat, imported, ...) isn't saved twice.
+      const { fresh, duplicates } = findDuplicates(ready, transactions);
+      const { cards, saved, allTx } = await saveDrafts(fresh, caption ? `Photo: ${caption}` : 'Photo', 'manual');
+      const queue = [...pending, ...unclear];
+      setPending(queue);
+      say({
+        seen: data.seen || undefined,
+        cards,
+        text: cards.length ? summary(cards) : unclear.length || duplicates.length ? undefined : data.reply,
+        feedback: cards.length ? data.feedback : null,
+        notes: warningsFor(saved, allTx),
+        duplicates: duplicates.map(({ item, match }) => ({
+          draft: item,
+          matched: `${match.description} from ${relativeDay(match.purchase_date, toLocalDateString()).replace(/^(Today|Yesterday)$/, (d) => d.toLowerCase())}`,
+          added: false,
+        })),
+        question: unclear.length ? questionFor(queue[0]) : undefined,
+      });
+    } catch (err) {
+      say({ text: err instanceof Error ? err.message : "Sorry, I couldn't read that photo." });
+    } finally {
+      setBusy(false);
+      if (cameraRef.current) cameraRef.current.value = '';
+    }
+  };
+
+  const addDuplicateAnyway = async (messageId: string, index: number) => {
+    const message = messages.find((m) => m.id === messageId);
+    const dup = message?.duplicates?.[index];
+    if (!dup || dup.added) return;
+    const { cards, saved, allTx } = await saveDrafts([dup.draft], 'Photo (added anyway)', 'manual');
+    if (!cards.length) return;
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === messageId && m.duplicates
+          ? { ...m, duplicates: m.duplicates.map((d, i) => (i === index ? { ...d, added: true } : d)) }
+          : m
+      )
+    );
+    say({ cards, text: 'Added.', notes: warningsFor(saved, allTx) });
   };
 
   const undoImport = async (messageId: string, summaryData: ImportSummary) => {
@@ -608,7 +710,7 @@ export default function AddExpensePage() {
         <Bubble role="assistant">
           <p>
             {greetingName ? `Hi ${greetingName}! ` : 'Hi! '}Tell me what you spent or earned. You can list several things in one
-            message, in English or Hinglish. You can also attach a bank statement and I&apos;ll add what&apos;s missing.
+            message, in English or Hinglish. You can also snap a photo of a bill, or attach a bank statement, and I&apos;ll add what&apos;s missing.
           </p>
         </Bubble>
         {messages.length === 0 && (
@@ -625,6 +727,13 @@ export default function AddExpensePage() {
             ))}
             <button
               type="button"
+              onClick={() => cameraRef.current?.click()}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-dashed border-primary/40 px-3 py-1.5 text-[13px] text-primary transition-colors hover:bg-primary/5"
+            >
+              <Camera className="size-3.5" /> Snap a bill
+            </button>
+            <button
+              type="button"
               onClick={() => fileRef.current?.click()}
               className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-dashed border-primary/40 px-3 py-1.5 text-[13px] text-primary transition-colors hover:bg-primary/5"
             >
@@ -636,7 +745,13 @@ export default function AddExpensePage() {
         {messages.map((m) =>
           m.role === 'user' ? (
             <Bubble key={m.id} role="user">
-              {m.attachment ? (
+              {m.photo ? (
+                <span className="flex flex-col items-end gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- local data URL thumbnail */}
+                  <img src={m.photo} alt="Photo you sent" className="max-h-40 rounded-lg border border-primary-foreground/20" />
+                  {m.text}
+                </span>
+              ) : m.attachment ? (
                 <span className="inline-flex items-center gap-2">
                   <Paperclip className="size-4" /> {m.attachment}
                 </span>
@@ -646,6 +761,33 @@ export default function AddExpensePage() {
             </Bubble>
           ) : (
             <div key={m.id} className="space-y-2 animate-rise">
+              {m.seen && (
+                <p className="flex max-w-[92%] items-center gap-1.5 pl-1 text-xs text-muted-foreground">
+                  <Eye className="size-3.5 shrink-0" /> {m.seen}
+                </p>
+              )}
+              {m.duplicates?.map((d, i) => (
+                <div
+                  key={i}
+                  className="flex max-w-[92%] flex-wrap items-center justify-between gap-2 rounded-2xl rounded-bl-md border border-border bg-card px-4 py-3 text-[13px] shadow-card"
+                >
+                  <span className="min-w-0">
+                    {d.added ? (
+                      <>Added &quot;{d.draft.description}&quot; anyway.</>
+                    ) : (
+                      <>
+                        This looks like <span className="font-medium">{d.matched}</span> ({formatCurrency(d.draft.amount ?? 0)}),
+                        which you&apos;d already added, so I didn&apos;t add it again.
+                      </>
+                    )}
+                  </span>
+                  {!d.added && (
+                    <Button variant="outline" size="sm" onClick={() => void addDuplicateAnyway(m.id, i)}>
+                      Add anyway
+                    </Button>
+                  )}
+                </div>
+              ))}
               {m.importSummary && (
                 <ImportSummaryCard summary={m.importSummary} onUndo={() => void undoImport(m.id, m.importSummary!)} />
               )}
@@ -737,7 +879,9 @@ export default function AddExpensePage() {
                 ? 'Listening to your note…'
                 : busy === 'reading'
                   ? 'Reading your statement. This can take up to a minute…'
-                  : 'Sorting that out…'}
+                  : busy === 'looking'
+                    ? 'Looking at your photo…'
+                    : 'Sorting that out…'}
             </span>
           </Bubble>
         )}
@@ -773,21 +917,45 @@ export default function AddExpensePage() {
         <input
           ref={fileRef}
           type="file"
-          accept=".pdf,.csv,.xlsx,.xls,.ods,.txt,application/pdf,text/csv"
+          accept=".pdf,.csv,.xlsx,.xls,.ods,.txt,application/pdf,text/csv,image/*"
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0];
-            if (file) void importStatement(file);
+            if (!file) return;
+            if (file.type.startsWith('image/')) void importPhoto(file);
+            else void importStatement(file);
+          }}
+        />
+        <input
+          ref={cameraRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void importPhoto(file);
           }}
         />
         <Button
           type="button"
           variant="ghost"
           size="icon"
+          onClick={() => cameraRef.current?.click()}
+          disabled={Boolean(busy)}
+          aria-label="Take a photo of a bill or item"
+          title="Photo of a bill, receipt or item"
+        >
+          <Camera />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
           onClick={() => fileRef.current?.click()}
           disabled={Boolean(busy)}
-          aria-label="Upload a bank statement"
-          title="Upload a bank statement (PDF, Excel or CSV)"
+          aria-label="Upload a bank statement or photo"
+          title="Upload a bank statement (PDF, Excel, CSV) or a photo"
         >
           <Paperclip />
         </Button>

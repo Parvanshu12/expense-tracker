@@ -46,3 +46,11 @@ export interface StatementResponse {
   items: EntryItem[];
   truncated: boolean;
 }
+
+export interface ReceiptResponse {
+  items: EntryItem[];
+  reply: string;
+  feedback: string | null;
+  /** One line on what the photo shows. */
+  seen: string;
+}

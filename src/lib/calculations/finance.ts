@@ -431,7 +431,8 @@ export function spendingWarnings(input: {
     } else if (status === 'critical' || status === 'warning') {
       warnings.push({
         tone: status === 'critical' ? 'danger' : 'warning',
-        text: `You've used ${Math.round(pct)}% of ${name}. Only ${formatINR(Number(b.amount) - spent)} is left.`,
+        // Never show 100% while money is still left.
+        text: `You've used ${Math.min(99, Math.round(pct))}% of ${name}. Only ${formatINR(Number(b.amount) - spent)} is left.`,
       });
     }
   }
