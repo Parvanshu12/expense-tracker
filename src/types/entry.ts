@@ -39,6 +39,8 @@ export interface EntryResponse {
   reply: string;
   /** One friendly sentence about what was recorded (no numbers). */
   feedback: string | null;
+  /** The category for the first waiting item, when the message explains what it was for. */
+  answer?: { category_id: string; category: string } | null;
   /** "Map all Prince Kumar payments to travel": file everything to/from this payee under one category. */
   rule?: EntryRule | null;
   source: 'workers-ai' | 'heuristic';

@@ -289,6 +289,11 @@ function entrySchema(categories: EntryRequest['categories']) {
 					],
 				},
 			},
+			answer_category: {
+				type: ['string', 'null'],
+				enum: [...categories.expense, ...categories.income, null],
+				description: 'When the first waiting item needs a category and this message explains what it was for: the best category for it, else null',
+			},
 			rule_payee: {
 				type: ['string', 'null'],
 				description: 'When the user asks to file ALL payments to/from a person or business under one category: that name as they wrote it, else null',
@@ -304,7 +309,7 @@ function entrySchema(categories: EntryRequest['categories']) {
 				description: 'One short, warm sentence about what was recorded, without numbers; null if nothing was recorded',
 			},
 		},
-		required: ['items', 'rule_payee', 'rule_category', 'reply', 'feedback'],
+		required: ['items', 'answer_category', 'rule_payee', 'rule_category', 'reply', 'feedback'],
 	};
 }
 
@@ -376,6 +381,11 @@ Rules:
 - merchant is a named business or brand (Swiggy, DMart, Uber) or null. "auto", "cab", "petrol" alone are not merchants.
 - payment_method only if stated (UPI, Credit Card, Debit Card, Net Banking, Cash, Other), else null.
 - feedback: one short, warm, practical sentence about what was just recorded, suited to this user and their goals. Be specific to the purchases (name them); never generic praise like "Great, you've tracked your expenses". No numbers or totals (the app adds exact figures and budget warnings). Essentials need only a light touch ("Electricity bill sorted for the month."); for "could trim" or optional spending, give one gentle, concrete idea (e.g. "Two delivery dinners this week — cooking one of them at home would stretch the food budget."). If the context shows a budget is nearly used up for that category, you may gently say so in words. Never preach. null if nothing was recorded.
+- answer_category: when the first waiting item needs a category and the message explains what it was for, directly or indirectly, set the best category for that item (an expense category for an expense, an income category for income). People often explain who someone is or why they pay them instead of naming a category, and the explanation can be long:
+  - "he is a cousin whose card I used to buy my phone and monitor, so I pay him the EMI" -> Financial Obligations
+  - "that's my mom's account, my dad uses it and I pay his loan EMI" -> Financial Obligations
+  - "my landlord" -> Housing & Rent; "rapido driver" -> Transportation; "doodhwala" -> Groceries; "sent to my sister for her birthday" -> Gifts & Donations
+  In that case don't also return the waiting item in items. Otherwise answer_category is null.
 - rule_payee / rule_category: when the user wants every payment to or from someone filed one way, or tells you what a payee is ("map all Prince Kumar payments to travel", "Prince Kumar is my rapido driver", "sab Blinkit wale groceries mein daalo", "anything to Ravi is rent"), set rule_payee to the name exactly as they wrote it (typos included) and rule_category to the best category. Then items is [] unless they also list new purchases with amounts, and reply is a short "Done." in their language. Otherwise both are null.
 - If the message contains no transaction (a greeting, thanks, a question about their spending), return items [] and answer in reply in one or two short sentences; for questions about their spending, suggest the "Ask for advice" page.
 - Otherwise reply is a brief acknowledgement without numbers, e.g. "Got it." in the user's language.`;

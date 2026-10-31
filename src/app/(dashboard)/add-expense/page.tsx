@@ -526,26 +526,34 @@ export default function AddExpensePage() {
         return;
       }
 
-      // A typed answer to "what was this for?" ("for house renovation: flooring"). Never ask the same
-      // question again: use the closest category the AI found, or keep the current guess.
+      // A typed answer to "what was this for?", short ("rent") or long ("he's a cousin whose card I used
+      // for my phone, I pay him the EMI"). Never ask the same question again without saying why.
       const first = pending[0];
-      if (first?.needs === 'category' && !/\d/.test(text) && (data.items.length > 0 || text.split(/\s+/).length <= 8)) {
-        const answer = data.items.find((i) => i.ref === first.ref) ?? data.items[0];
-        const match = answer
-          ? categories.find(
-              (c) =>
-                c.category_type === first.transaction_type &&
-                (c.id === answer.category_id || c.name.toLowerCase() === answer.category.toLowerCase())
-            )
-          : undefined;
-        const resolved: EntryItem = match
-          ? {
-              ...first,
-              category_id: match.id,
-              category: match.name,
-              essentiality: first.transaction_type === 'income' ? 'essential' : answer!.essentiality,
-            }
-          : first;
+      const newPurchases = data.items.filter((i) => i.amount !== null && i.ref !== first?.ref);
+      if (first?.needs === 'category' && newPurchases.length === 0 && !/\?\s*$/.test(text)) {
+        const item = data.items.find((i) => i.ref === first.ref) ?? data.items[0];
+        const match = data.answer
+          ? categories.find((c) => c.id === data.answer!.category_id)
+          : item
+            ? categories.find(
+                (c) =>
+                  c.category_type === first.transaction_type &&
+                  (c.id === item.category_id || c.name.toLowerCase() === item.category.toLowerCase())
+              )
+            : undefined;
+        if (!match) {
+          say({
+            text: "I couldn't tell which category that fits. Tap one of the options, or say it in a word or two, like \"rent\" or \"EMI\".",
+            question: questionFor(first),
+          });
+          return;
+        }
+        const resolved: EntryItem = {
+          ...first,
+          category_id: match.id,
+          category: match.name,
+          essentiality: first.transaction_type === 'income' ? 'essential' : (item?.essentiality ?? first.essentiality),
+        };
         await resolvePending(first, resolved, pending.slice(1), text, method);
         return;
       }

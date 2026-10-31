@@ -62,6 +62,7 @@ const modelResponse = z.object({
   items: z.array(modelItem).max(15),
   reply: z.string().max(600).default(''),
   feedback: z.string().max(300).nullable().default(null),
+  answer_category: z.string().max(60).nullable().default(null),
   rule_payee: z.string().max(80).nullable().default(null),
   rule_category: z.string().max(60).nullable().default(null),
 });
@@ -98,7 +99,16 @@ export const POST = handle(async (request: NextRequest) => {
       ? categories.find((c) => c.name.toLowerCase() === data.rule_category?.toLowerCase())
       : undefined;
     const ruleCategory = modelCategory && (namedCategory(body.message, categories, modelCategory.category_type) ?? modelCategory);
+    const waiting = body.pending[0];
+    const answerCategory =
+      waiting?.needs === 'category' && data.answer_category
+        ? (namedCategory(body.message, categories, waiting.transaction_type) ??
+          categories.find(
+            (c) => c.category_type === waiting.transaction_type && c.name.toLowerCase() === data.answer_category?.toLowerCase()
+          ))
+        : undefined;
     const result: EntryResponse = {
+      answer: answerCategory ? { category_id: answerCategory.id, category: answerCategory.name } : null,
       rule: ruleCategory
         ? {
             payee: data.rule_payee!.trim(),
