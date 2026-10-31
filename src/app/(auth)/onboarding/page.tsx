@@ -1,14 +1,70 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Sparkles, Globe, DollarSign, Clock, Wallet, Target, ArrowRight, Check } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
+import { Field, Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
+import { Logo } from '@/components/layout/logo';
 import { DataService } from '@/lib/data-service';
 import { toLocalDateString } from '@/lib/calculations/finance';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+
+const LANGUAGES = [
+  { id: 'en', label: 'English', hint: 'Standard English' },
+  { id: 'hinglish', label: 'Hinglish', hint: 'Hindi and English mix' },
+];
+
+const GOALS = [
+  { id: 'track_expenses', label: 'Understand where my money goes' },
+  { id: 'cut_unnecessary', label: 'Cut spending I don’t need' },
+  { id: 'emergency_fund', label: 'Build a 6-month emergency fund' },
+  { id: 'grow_wealth', label: 'Grow my long-term savings' },
+];
+
+/** Selectable row used for language and goal choices. */
+function Choice({
+  selected,
+  onSelect,
+  label,
+  hint,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  label: string;
+  hint?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onSelect}
+      className={cn(
+        'flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors',
+        selected ? 'border-foreground bg-accent/60' : 'border-border bg-card hover:bg-accent/50'
+      )}
+    >
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-foreground">{label}</span>
+        {hint && <span className="block text-xs text-muted-foreground">{hint}</span>}
+      </span>
+      <span
+        className={cn(
+          'flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors',
+          selected ? 'border-foreground bg-foreground text-background' : 'border-input'
+        )}
+      >
+        {selected && <Check className="size-2.5" strokeWidth={3} />}
+      </span>
+    </button>
+  );
+}
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -59,10 +115,10 @@ export default function OnboardingPage() {
         });
       }
 
-      toast.success('Your preferences have been saved!');
+      toast.success('You’re all set');
       router.push('/dashboard');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save preferences');
+      toast.error(err instanceof Error ? err.message : 'Couldn’t save your preferences');
       router.push('/dashboard');
     } finally {
       setLoading(false);
@@ -70,217 +126,171 @@ export default function OnboardingPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-[#090d16] px-4 py-12">
-      <div className="w-full max-w-lg space-y-6">
-        {/* Header Indicator */}
-        <div className="flex flex-col items-center text-center space-y-2">
-          <div className="h-12 w-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-200 dark:shadow-none">
-            <Sparkles className="h-6 w-6" />
-          </div>
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-            Welcome to SpendWise AI
-          </h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Let&apos;s personalize your financial workspace.
-          </p>
+    <div className="flex min-h-screen flex-col items-center bg-background px-4 py-10 sm:justify-center sm:py-16">
+      <div className="w-full max-w-md">
+        <div className="animate-rise flex flex-col items-center text-center">
+          <Logo className="size-8 rounded-[9px]" />
+          <h1 className="mt-5 text-2xl font-semibold tracking-tight text-foreground">Set up SpendWise</h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">A few details so your numbers make sense.</p>
+        </div>
 
-          {/* Step Indicator */}
-          <div className="flex items-center gap-2 pt-2">
-            <div className={`h-2 rounded-full transition-all ${step === 1 ? 'w-8 bg-indigo-600' : 'w-2 bg-slate-300 dark:bg-slate-700'}`} />
-            <div className={`h-2 rounded-full transition-all ${step === 2 ? 'w-8 bg-indigo-600' : 'w-2 bg-slate-300 dark:bg-slate-700'}`} />
+        {/* Step indicator */}
+        <div className="animate-rise mt-8" style={{ animationDelay: '60ms' }}>
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-medium text-foreground tabular">Step {step} of 2</span>
+            <span className="text-muted-foreground">{step === 1 ? 'Basics' : 'Money'}</span>
+          </div>
+          <div className="mt-2 flex gap-1.5" aria-hidden>
+            {[1, 2].map((s) => (
+              <div
+                key={s}
+                className={cn('h-1 flex-1 rounded-full transition-colors', s <= step ? 'bg-foreground' : 'bg-border')}
+              />
+            ))}
           </div>
         </div>
 
-        <Card className="shadow-lg border-slate-200/80 dark:border-slate-800">
-          {step === 1 && (
-            <div>
+        <Card className="animate-rise mt-4" style={{ animationDelay: '120ms' }}>
+          {step === 1 ? (
+            <>
               <CardHeader>
-                <CardTitle className="text-lg">Step 1: Regional & Display Settings</CardTitle>
-                <CardDescription>
-                  Configure your primary currency and time localization.
-                </CardDescription>
+                <CardTitle className="text-base">The basics</CardTitle>
+                <CardDescription>How you’d like amounts, dates and replies shown.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    What should we call you?
-                  </label>
+                <Field label="What should we call you?" htmlFor="display-name">
                   <Input
+                    id="display-name"
                     type="text"
-                    placeholder="e.g. Priya or Akshay"
+                    autoComplete="given-name"
+                    placeholder="e.g. Priya"
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
                   />
+                </Field>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Currency" htmlFor="currency">
+                    <Select id="currency" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+                      <option value="INR">₹ INR, Indian rupee</option>
+                      <option value="USD">$ USD, US dollar</option>
+                      <option value="EUR">€ EUR, Euro</option>
+                      <option value="GBP">£ GBP, British pound</option>
+                      <option value="AED">AED, UAE dirham</option>
+                      <option value="SGD">S$ SGD, Singapore dollar</option>
+                    </Select>
+                  </Field>
+
+                  <Field label="Timezone" htmlFor="timezone">
+                    <Select id="timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)}>
+                      <option value="Asia/Kolkata">Asia/Kolkata (IST)</option>
+                      <option value="America/New_York">America/New_York (ET)</option>
+                      <option value="Europe/London">Europe/London (UK)</option>
+                      <option value="Asia/Dubai">Asia/Dubai (GST)</option>
+                      <option value="Asia/Singapore">Asia/Singapore (SGT)</option>
+                    </Select>
+                  </Field>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                      <DollarSign className="h-3.5 w-3.5 text-slate-500" />
-                      Preferred Currency
-                    </label>
-                    <select
-                      value={currency}
-                      onChange={(e) => setCurrency(e.target.value)}
-                      className="w-full h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      <option value="INR">₹ INR (Indian Rupee)</option>
-                      <option value="USD">$ USD (US Dollar)</option>
-                      <option value="EUR">€ EUR (Euro)</option>
-                      <option value="GBP">£ GBP (British Pound)</option>
-                      <option value="AED">AED (UAE Dirham)</option>
-                      <option value="SGD">S$ SGD (Singapore Dollar)</option>
-                    </select>
+                <div className="flex flex-col gap-1.5">
+                  <Label id="language-label">Language</Label>
+                  <div role="radiogroup" aria-labelledby="language-label" className="grid grid-cols-2 gap-2">
+                    {LANGUAGES.map((l) => (
+                      <Choice
+                        key={l.id}
+                        selected={language === l.id}
+                        onSelect={() => setLanguage(l.id)}
+                        label={l.label}
+                        hint={l.hint}
+                      />
+                    ))}
                   </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                      <Clock className="h-3.5 w-3.5 text-slate-500" />
-                      Timezone
-                    </label>
-                    <select
-                      value={timezone}
-                      onChange={(e) => setTimezone(e.target.value)}
-                      className="w-full h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      <option value="Asia/Kolkata">Asia/Kolkata (IST +5:30)</option>
-                      <option value="America/New_York">America/New_York (EST)</option>
-                      <option value="Europe/London">Europe/London (GMT/BST)</option>
-                      <option value="Asia/Dubai">Asia/Dubai (GST +4)</option>
-                      <option value="Asia/Singapore">Asia/Singapore (SGT +8)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <Globe className="h-3.5 w-3.5 text-slate-500" />
-                    Preferred AI & Interface Language
-                  </label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setLanguage('en')}
-                      className={`p-3 rounded-lg border text-left flex items-center justify-between text-xs font-medium transition-all ${
-                        language === 'en'
-                          ? 'border-indigo-600 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300'
-                          : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900'
-                      }`}
-                    >
-                      <div>
-                        <div className="font-semibold text-slate-900 dark:text-white">English</div>
-                        <div className="text-[11px] text-slate-500">Standard English interface</div>
-                      </div>
-                      {language === 'en' && <Check className="h-4 w-4 text-indigo-600 shrink-0" />}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setLanguage('hinglish')}
-                      className={`p-3 rounded-lg border text-left flex items-center justify-between text-xs font-medium transition-all ${
-                        language === 'hinglish'
-                          ? 'border-indigo-600 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300'
-                          : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900'
-                      }`}
-                    >
-                      <div>
-                        <div className="font-semibold text-slate-900 dark:text-white">Hinglish</div>
-                        <div className="text-[11px] text-slate-500">Natural Hindi + English mix</div>
-                      </div>
-                      {language === 'hinglish' && <Check className="h-4 w-4 text-indigo-600 shrink-0" />}
-                    </button>
-                  </div>
+                  <p className="text-xs text-muted-foreground">Used for the interface and the money coach.</p>
                 </div>
               </CardContent>
-              <CardFooter className="flex justify-end pt-2">
-                <Button onClick={() => setStep(2)} className="gap-2">
-                  Next Step
-                  <ArrowRight className="h-4 w-4" />
+              <CardFooter className="justify-end">
+                <Button onClick={() => setStep(2)}>
+                  Continue
+                  <ArrowRight />
                 </Button>
               </CardFooter>
-            </div>
-          )}
-
-          {step === 2 && (
-            <div>
+            </>
+          ) : (
+            <>
               <CardHeader>
-                <CardTitle className="text-lg">Step 2: Financial Goals & Targets (Optional)</CardTitle>
-                <CardDescription>
-                  All inputs below are strictly optional. You can change them anytime in Settings.
-                </CardDescription>
+                <CardTitle className="text-base">Your money</CardTitle>
+                <CardDescription>All optional. You can change these any time in Settings.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                      <Wallet className="h-3.5 w-3.5 text-slate-500" />
-                      Approx Monthly Income (Optional)
-                    </label>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Monthly income" htmlFor="income" hint="Used to work out your savings rate.">
                     <Input
+                      id="income"
                       type="number"
-                      placeholder="e.g. 75000"
+                      inputMode="decimal"
+                      min={0}
+                      placeholder="75000"
+                      className="tabular"
                       value={monthlyIncome}
                       onChange={(e) => setMonthlyIncome(e.target.value)}
                     />
-                    <p className="text-[10px] text-slate-500">Used for actual savings calculations</p>
-                  </div>
+                  </Field>
 
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                      <DollarSign className="h-3.5 w-3.5 text-slate-500" />
-                      Target Monthly Budget (Optional)
-                    </label>
+                  <Field label="Monthly budget" htmlFor="budget" hint="Alerts at 75%, 90% and 100%.">
                     <Input
+                      id="budget"
                       type="number"
-                      placeholder="e.g. 50000"
+                      inputMode="decimal"
+                      min={0}
+                      placeholder="50000"
+                      className="tabular"
                       value={monthlyBudget}
                       onChange={(e) => setMonthlyBudget(e.target.value)}
                     />
-                    <p className="text-[10px] text-slate-500">Generates 75% & 90% utilization alerts</p>
-                  </div>
+                  </Field>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <Target className="h-3.5 w-3.5 text-slate-500" />
-                    Primary Financial Objective
-                  </label>
-                  <div className="grid grid-cols-1 gap-2">
-                    {[
-                      { id: 'track_expenses', label: 'Understand where my money goes each month' },
-                      { id: 'cut_unnecessary', label: 'Identify and reduce unnecessary/optimizable leaks' },
-                      { id: 'emergency_fund', label: 'Build a solid 6-month emergency reserve fund' },
-                      { id: 'grow_wealth', label: 'Simulate and maximize long-term compound savings' },
-                    ].map((g) => (
-                      <button
+                <div className="flex flex-col gap-1.5">
+                  <Label id="goal-label">Main goal</Label>
+                  <div role="radiogroup" aria-labelledby="goal-label" className="flex flex-col gap-2">
+                    {GOALS.map((g) => (
+                      <Choice
                         key={g.id}
-                        type="button"
-                        onClick={() => setPrimaryGoal(g.id)}
-                        className={`p-3 rounded-lg border text-left text-xs font-medium flex items-center justify-between transition-all ${
-                          primaryGoal === g.id
-                            ? 'border-indigo-600 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300'
-                            : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-700 dark:text-slate-300'
-                        }`}
-                      >
-                        <span>{g.label}</span>
-                        {primaryGoal === g.id && <Check className="h-4 w-4 text-indigo-600 shrink-0" />}
-                      </button>
+                        selected={primaryGoal === g.id}
+                        onSelect={() => setPrimaryGoal(g.id)}
+                        label={g.label}
+                      />
                     ))}
                   </div>
+                  {primaryGoal === 'emergency_fund' && (
+                    <p className="text-xs text-muted-foreground">
+                      We’ll create a savings goal for six months of income.
+                    </p>
+                  )}
                 </div>
               </CardContent>
-              <CardFooter className="flex justify-between pt-2">
-                <Button variant="outline" onClick={() => setStep(1)}>
+              <CardFooter className="justify-between">
+                <Button variant="ghost" onClick={() => setStep(1)} disabled={loading}>
+                  <ArrowLeft />
                   Back
                 </Button>
-                <Button onClick={handleFinish} disabled={loading} className="gap-2 bg-indigo-600">
-                  {loading ? 'Saving...' : 'Finish & Go to Dashboard'}
-                  <ArrowRight className="h-4 w-4" />
+                <Button onClick={handleFinish} loading={loading}>
+                  {loading ? 'Saving' : 'Finish setup'}
+                  {!loading && <ArrowRight />}
                 </Button>
               </CardFooter>
-            </div>
+            </>
           )}
         </Card>
+
+        <div className="mt-6 text-center">
+          <Link
+            href="/dashboard"
+            className="rounded-md px-2 py-1 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Skip for now
+          </Link>
+        </div>
       </div>
     </div>
   );

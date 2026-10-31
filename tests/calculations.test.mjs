@@ -13,6 +13,7 @@ import {
   filterTransactionsByDateRange,
   toLocalDateString,
 } from '../src/lib/calculations/finance.ts';
+import { extractAmount, parseExpenseHeuristically } from '../src/lib/ai/heuristic-parser.ts';
 
 describe('SpendWise AI Calculation Engine Tests', () => {
   it('correctly calculates income, expenses, remaining balance, and actual savings', () => {
@@ -106,21 +107,31 @@ describe('SpendWise AI Calculation Engine Tests', () => {
   });
 
   it('parses amounts accurately from English and Hinglish phrases', () => {
-    const extractAmount = (str) => {
-      const match = str.match(/(?:(?:₹|rs\.?|inr|rupees|rupay)\s*([\d,]+(?:\.\d+)?))|([\d,]+(?:\.\d+)?)\s*(?:₹|rs\.?|rupees|rupay|ka|ki|bheje|diye|aaye)|(?:spent|paid|for|cost|deeye|bhara|liya)\s*([\d,]+(?:\.\d+)?)/i);
-      if (match) {
-        const raw = match[1] || match[2] || match[3];
-        return parseFloat(raw.replace(/,/g, ''));
-      }
-      const general = str.match(/\b\d+(\.\d{1,2})?\b/);
-      return general ? parseFloat(general[0]) : null;
-    };
-
     assert.equal(extractAmount('Spent ₹250 on lunch'), 250);
     assert.equal(extractAmount('Paid 1200 rupees for groceries'), 1200);
     assert.equal(extractAmount('Kal 1500 ka petrol bharwaya'), 1500);
     assert.equal(extractAmount('Dost ko 500 diye dinner ke liye'), 500);
     assert.equal(extractAmount('Swiggy se 450 ka khana mangwaya'), 450);
+    assert.equal(extractAmount('Got salary 85k today'), 85000);
+    assert.equal(extractAmount('bought a keyboard'), null);
+  });
+
+  it('classifies notes offline when the AI service is unavailable', () => {
+    const food = parseExpenseHeuristically('kal 450 ka khana swiggy se, upi', '2026-11-01');
+    assert.equal(food.amount, 450);
+    assert.equal(food.category, 'Food & Dining');
+    assert.equal(food.essentiality, 'optimizable');
+    assert.equal(food.merchant, 'Swiggy');
+    assert.equal(food.payment_method, 'UPI');
+    assert.equal(food.purchase_date, '2026-10-31');
+
+    const salary = parseExpenseHeuristically('Got salary 85k today', '2026-11-01');
+    assert.equal(salary.transaction_type, 'income');
+    assert.equal(salary.category, 'Salary');
+
+    const missing = parseExpenseHeuristically('bought a keyboard on amazon', '2026-11-01');
+    assert.equal(missing.amount, null);
+    assert.equal(missing.needs_clarification, true);
   });
 
   it('enforces category ownership isolation rule', () => {

@@ -1,8 +1,8 @@
 'use client';
 
-import { isAuthSessionMissingError } from '@supabase/supabase-js';
 import { Transaction, Category, Budget, SavingsGoal, Profile } from '@/types/database';
-import { isSupabaseConfigured, createClient } from './supabase/client';
+import { isSandbox } from './auth-client';
+import { toLocalDateString } from './calculations/finance';
 
 export const DEFAULT_SYSTEM_CATEGORIES: Category[] = [
   { id: 'cat-food', user_id: null, name: 'Food & Dining', category_type: 'expense', icon: 'Utensils', is_system: true, created_at: new Date().toISOString() },
@@ -36,43 +36,24 @@ const LOCAL_STORAGE_GOALS = 'spendwise_local_goals';
 const LOCAL_STORAGE_PROFILE = 'spendwise_local_profile';
 const LOCAL_STORAGE_CATEGORIES = 'spendwise_local_categories';
 
-type SupabaseBrowserClient = NonNullable<ReturnType<typeof createClient>>;
-
-interface LiveSession {
-  supabase: SupabaseBrowserClient;
-  userId: string;
-}
-
 /**
- * Returns the Supabase client and signed-in user when the app runs against a
- * real database, or null in local sandbox mode (Supabase not configured, or a
- * demo-cookie session with nobody signed in).
- *
- * In live mode every DataService call goes to Supabase and throws on failure.
- * It must never fall back to localStorage: that made failed saves look
- * successful while the data only existed in one browser.
+ * Calls the app's own API (D1 behind it). Any non-2xx response throws with the
+ * server's message; a 401 sends the user back to sign in. Signed-in mode never
+ * falls back to localStorage, which would make a failed save look successful.
  */
-async function getLiveSession(): Promise<LiveSession | null> {
-  if (!isSupabaseConfigured()) return null;
-  const supabase = createClient();
-  if (!supabase) return null;
-
-  const { data: { user }, error } = await supabase.auth.getUser();
-  if (user) return { supabase, userId: user.id };
-  if (error && !isAuthSessionMissingError(error)) {
-    throw new Error(`Could not verify your session: ${error.message}`);
+async function api<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  const res = await fetch(path, {
+    method: init?.method ?? 'GET',
+    headers: init?.body === undefined ? undefined : { 'content-type': 'application/json' },
+    body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+    cache: 'no-store',
+  });
+  const json = (await res.json().catch(() => ({}))) as { error?: string };
+  if (res.status === 401 && typeof window !== 'undefined') {
+    window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
   }
-  return null;
-}
-
-function unwrap<T>(result: { data: T | null; error: { message: string } | null }, action: string): T {
-  if (result.error) throw new Error(`Could not ${action}: ${result.error.message}`);
-  if (result.data === null) throw new Error(`Could not ${action}: no data returned`);
-  return result.data;
-}
-
-function throwIfError(error: { message: string } | null, action: string): void {
-  if (error) throw new Error(`Could not ${action}: ${error.message}`);
+  if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+  return json as T;
 }
 
 function readLocal<T>(key: string, fallback: T): T {
@@ -101,30 +82,101 @@ const DEMO_PROFILE: Profile = {
   updated_at: new Date().toISOString(),
 };
 
+/**
+ * Single data layer for every page. Signed-in users read and write through
+ * /api/* (Cloudflare D1); sandbox (demo) sessions use localStorage only.
+ */
+type DemoEntry = [
+  daysAgo: number,
+  categoryId: string,
+  amount: number,
+  description: string,
+  merchant: string | null,
+  essentiality: Transaction['essentiality'],
+  paymentMethod: string,
+];
+
+/** About three months of realistic sample activity, relative to `now`, for the demo. */
+function buildDemoTransactions(now: Date): Transaction[] {
+  const entries: DemoEntry[] = [];
+  for (let month = 0; month < 3; month++) {
+    const base = month * 30;
+    entries.push(
+      [base + 2, 'cat-salary', 85000, 'Monthly salary', 'Tech Corp India', 'essential', 'Net Banking'],
+      [base + 4, 'cat-housing', 22000, 'Rent', 'Landlord', 'essential', 'UPI'],
+      [base + 6, 'cat-utilities', 1450 + month * 90, 'Electricity bill', 'BESCOM', 'essential', 'UPI'],
+      [base + 7, 'cat-utilities', 799, 'Broadband', 'Airtel', 'essential', 'UPI'],
+      [base + 9, 'cat-subs', 649, 'Netflix', 'Netflix', 'optimizable', 'Credit Card'],
+      [base + 9, 'cat-subs', 119, 'Spotify', 'Spotify', 'optimizable', 'Credit Card'],
+      [base + 15, 'cat-health', 640 + month * 120, 'Pharmacy', 'Apollo Pharmacy', 'essential', 'UPI'],
+      [base + 20, 'cat-finance', 3000, 'SIP investment', 'Zerodha', 'essential', 'Net Banking']
+    );
+    for (let w = 0; w < 4; w++) {
+      const d = base + w * 7;
+      entries.push(
+        [d + 1, 'cat-groceries', 2100 + ((w + month) % 3) * 380, 'Weekly groceries', w % 2 ? 'Blinkit' : 'Nature Basket', 'essential', 'UPI'],
+        [d + 3, 'cat-food', 380 + ((w * 3 + month) % 4) * 110, 'Dinner delivery', w % 2 ? 'Zomato' : 'Swiggy', 'optimizable', 'UPI'],
+        [d + 5, 'cat-transport', 240 + ((w + month) % 3) * 90, 'Cab to office', 'Uber', 'optimizable', 'UPI'],
+        [d + 2, 'cat-transport', 1200, 'Petrol', 'Indian Oil', 'essential', 'Debit Card']
+      );
+    }
+    entries.push(
+      [base + 12, 'cat-entertainment', 1499 - month * 200, 'Movie night', 'PVR Inox', 'discretionary', 'Credit Card'],
+      [base + 18, 'cat-shopping', 2799 + month * 650, month === 1 ? 'Running shoes' : 'Clothes', month === 1 ? 'Nike' : 'Myntra', 'discretionary', 'Credit Card'],
+      [base + 23, 'cat-food', 1850, 'Dinner with friends', 'Toit', 'discretionary', 'Credit Card'],
+      [base + 26, 'cat-personal', 600, 'Haircut', 'Looks Salon', 'optimizable', 'UPI']
+    );
+  }
+  entries.push([0, 'cat-food', 180, 'Coffee', 'Third Wave Coffee', 'optimizable', 'UPI']);
+  entries.push([1, 'cat-freelance', 12000, 'Logo design project', 'Freelance client', 'essential', 'Net Banking']);
+
+  const stamp = now.toISOString();
+  return entries
+    .map(([daysAgo, categoryId, amount, description, merchant, essentiality, paymentMethod], i): Transaction => {
+      const date = new Date(now);
+      date.setDate(date.getDate() - daysAgo);
+      const income = categoryId === 'cat-salary' || categoryId === 'cat-freelance';
+      const purchaseDate = toLocalDateString(date);
+      return {
+        id: `demo-${i}`,
+        user_id: 'demo-user-1',
+        category_id: categoryId,
+        transaction_type: income ? 'income' : 'expense',
+        amount,
+        currency: 'INR',
+        description,
+        merchant,
+        payment_method: paymentMethod,
+        purchase_date: purchaseDate,
+        purchase_time: null,
+        occurred_at: `${purchaseDate}T12:00:00`,
+        entry_method: i % 5 === 0 ? 'ai_text' : 'manual',
+        original_input: null,
+        ai_extraction: null,
+        essentiality,
+        classification_confidence: null,
+        classification_reason: null,
+        user_corrected_classification: false,
+        review_status: 'confirmed',
+        created_at: stamp,
+        updated_at: stamp,
+      };
+    })
+    .filter((t) => t.purchase_date <= toLocalDateString(now))
+    .sort((a, b) => b.purchase_date.localeCompare(a.purchase_date));
+}
+
 export const DataService = {
   // Profiles
   async getProfile(): Promise<Profile> {
-    const live = await getLiveSession();
-    if (live) {
-      const result = await live.supabase.from('profiles').select('*').eq('id', live.userId).single();
-      return unwrap(result, 'load your profile') as Profile;
-    }
-
+    if (!isSandbox()) return (await api<{ profile: Profile }>('/api/profile')).profile;
     return readLocal<Profile>(LOCAL_STORAGE_PROFILE, DEMO_PROFILE);
   },
 
   async updateProfile(profile: Partial<Profile>): Promise<Profile> {
-    const live = await getLiveSession();
-    if (live) {
-      const result = await live.supabase
-        .from('profiles')
-        .update({ ...profile, updated_at: new Date().toISOString() })
-        .eq('id', live.userId)
-        .select()
-        .single();
-      return unwrap(result, 'save your profile') as Profile;
+    if (!isSandbox()) {
+      return (await api<{ profile: Profile }>('/api/profile', { method: 'PATCH', body: profile })).profile;
     }
-
     const current = readLocal<Profile>(LOCAL_STORAGE_PROFILE, DEMO_PROFILE);
     const updated = { ...current, ...profile, updated_at: new Date().toISOString() };
     writeLocal(LOCAL_STORAGE_PROFILE, updated);
@@ -133,56 +185,28 @@ export const DataService = {
 
   // Categories
   async getCategories(): Promise<Category[]> {
-    const live = await getLiveSession();
-    if (live) {
-      const result = await live.supabase.from('categories').select('*');
-      const categories = unwrap(result, 'load categories') as Category[];
-      if (categories.length === 0) {
-        throw new Error(
-          'No categories found in Supabase. Run supabase/setup_complete.sql to seed the system categories.'
-        );
-      }
-      return categories;
-    }
-
+    if (!isSandbox()) return (await api<{ categories: Category[] }>('/api/categories')).categories;
     const custom = readLocal<Category[]>(LOCAL_STORAGE_CATEGORIES, []);
     return [...DEFAULT_SYSTEM_CATEGORIES, ...custom];
   },
 
   async addCategory(cat: Omit<Category, 'id' | 'created_at'>): Promise<Category> {
-    const live = await getLiveSession();
-    if (live) {
-      const result = await live.supabase
-        .from('categories')
-        .insert({ ...cat, user_id: live.userId, is_system: false })
-        .select()
-        .single();
-      return unwrap(result, 'add the category') as Category;
+    if (!isSandbox()) {
+      return (await api<{ category: Category }>('/api/categories', { method: 'POST', body: cat })).category;
     }
-
-    const newCat: Category = {
-      ...cat,
-      id: newLocalId('cat_custom_'),
-      is_system: false,
-      created_at: new Date().toISOString(),
-    };
+    const newCat: Category = { ...cat, id: newLocalId('cat_custom_'), is_system: false, created_at: new Date().toISOString() };
     const custom = readLocal<Category[]>(LOCAL_STORAGE_CATEGORIES, []);
     writeLocal(LOCAL_STORAGE_CATEGORIES, [...custom, newCat]);
     return newCat;
   },
 
   async deleteCategory(id: string): Promise<boolean> {
-    const live = await getLiveSession();
-    if (live) {
-      const { error } = await live.supabase.from('categories').delete().eq('id', id).eq('is_system', false);
-      throwIfError(error, 'delete the category');
+    if (!isSandbox()) {
+      await api(`/api/categories/${encodeURIComponent(id)}`, { method: 'DELETE' });
       return true;
     }
-
     // Only allow deleting non-system categories
-    if (DEFAULT_SYSTEM_CATEGORIES.some((c) => c.id === id)) {
-      return false;
-    }
+    if (DEFAULT_SYSTEM_CATEGORIES.some((c) => c.id === id)) return false;
     const custom = readLocal<Category[]>(LOCAL_STORAGE_CATEGORIES, []);
     writeLocal(LOCAL_STORAGE_CATEGORIES, custom.filter((c) => c.id !== id));
     return true;
@@ -190,15 +214,7 @@ export const DataService = {
 
   // Transactions
   async getTransactions(): Promise<Transaction[]> {
-    const live = await getLiveSession();
-    if (live) {
-      const result = await live.supabase
-        .from('transactions')
-        .select('*, category:categories(*)')
-        .order('purchase_date', { ascending: false });
-      return unwrap(result, 'load transactions') as Transaction[];
-    }
-
+    if (!isSandbox()) return (await api<{ transactions: Transaction[] }>('/api/transactions')).transactions;
     const txs = readLocal<Transaction[]>(LOCAL_STORAGE_TRANSACTIONS, []);
     const cats = await this.getCategories();
     return txs.map((t) => ({
@@ -208,16 +224,9 @@ export const DataService = {
   },
 
   async addTransaction(tx: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>): Promise<Transaction> {
-    const live = await getLiveSession();
-    if (live) {
-      const result = await live.supabase
-        .from('transactions')
-        .insert({ ...tx, user_id: live.userId })
-        .select('*, category:categories(*)')
-        .single();
-      return unwrap(result, 'save the transaction') as Transaction;
+    if (!isSandbox()) {
+      return (await api<{ transaction: Transaction }>('/api/transactions', { method: 'POST', body: tx })).transaction;
     }
-
     const newTx: Transaction = {
       ...tx,
       id: newLocalId('tx_'),
@@ -230,33 +239,25 @@ export const DataService = {
   },
 
   async updateTransaction(id: string, updates: Partial<Transaction>): Promise<Transaction | null> {
-    const live = await getLiveSession();
-    if (live) {
-      const result = await live.supabase
-        .from('transactions')
-        .update({ ...updates, updated_at: new Date().toISOString() })
-        .eq('id', id)
-        .select('*, category:categories(*)')
-        .single();
-      return unwrap(result, 'update the transaction') as Transaction;
+    if (!isSandbox()) {
+      return (
+        await api<{ transaction: Transaction }>(`/api/transactions/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: updates,
+        })
+      ).transaction;
     }
-
     const current = readLocal<Transaction[]>(LOCAL_STORAGE_TRANSACTIONS, []);
-    const updated = current.map((t) =>
-      t.id === id ? { ...t, ...updates, updated_at: new Date().toISOString() } : t
-    );
+    const updated = current.map((t) => (t.id === id ? { ...t, ...updates, updated_at: new Date().toISOString() } : t));
     writeLocal(LOCAL_STORAGE_TRANSACTIONS, updated);
     return updated.find((t) => t.id === id) || null;
   },
 
   async deleteTransaction(id: string): Promise<boolean> {
-    const live = await getLiveSession();
-    if (live) {
-      const { error } = await live.supabase.from('transactions').delete().eq('id', id);
-      throwIfError(error, 'delete the transaction');
+    if (!isSandbox()) {
+      await api(`/api/transactions/${encodeURIComponent(id)}`, { method: 'DELETE' });
       return true;
     }
-
     const current = readLocal<Transaction[]>(LOCAL_STORAGE_TRANSACTIONS, []);
     writeLocal(LOCAL_STORAGE_TRANSACTIONS, current.filter((t) => t.id !== id));
     return true;
@@ -264,26 +265,12 @@ export const DataService = {
 
   // Budgets
   async getBudgets(): Promise<Budget[]> {
-    const live = await getLiveSession();
-    if (live) {
-      const result = await live.supabase.from('budgets').select('*, category:categories(*)');
-      return unwrap(result, 'load budgets') as Budget[];
-    }
-
+    if (!isSandbox()) return (await api<{ budgets: Budget[] }>('/api/budgets')).budgets;
     return readLocal<Budget[]>(LOCAL_STORAGE_BUDGETS, []);
   },
 
   async saveBudget(budget: Omit<Budget, 'id' | 'created_at' | 'updated_at'>): Promise<Budget> {
-    const live = await getLiveSession();
-    if (live) {
-      const result = await live.supabase
-        .from('budgets')
-        .insert({ ...budget, user_id: live.userId })
-        .select('*, category:categories(*)')
-        .single();
-      return unwrap(result, 'save the budget') as Budget;
-    }
-
+    if (!isSandbox()) return (await api<{ budget: Budget }>('/api/budgets', { method: 'POST', body: budget })).budget;
     const newBudget: Budget = {
       ...budget,
       id: newLocalId('bgt_'),
@@ -296,13 +283,10 @@ export const DataService = {
   },
 
   async deleteBudget(id: string): Promise<boolean> {
-    const live = await getLiveSession();
-    if (live) {
-      const { error } = await live.supabase.from('budgets').delete().eq('id', id);
-      throwIfError(error, 'delete the budget');
+    if (!isSandbox()) {
+      await api(`/api/budgets/${encodeURIComponent(id)}`, { method: 'DELETE' });
       return true;
     }
-
     const current = readLocal<Budget[]>(LOCAL_STORAGE_BUDGETS, []);
     writeLocal(LOCAL_STORAGE_BUDGETS, current.filter((b) => b.id !== id));
     return true;
@@ -310,29 +294,12 @@ export const DataService = {
 
   // Savings Goals
   async getGoals(): Promise<SavingsGoal[]> {
-    const live = await getLiveSession();
-    if (live) {
-      const result = await live.supabase
-        .from('savings_goals')
-        .select('*')
-        .order('created_at', { ascending: false });
-      return unwrap(result, 'load savings goals') as SavingsGoal[];
-    }
-
+    if (!isSandbox()) return (await api<{ goals: SavingsGoal[] }>('/api/goals')).goals;
     return readLocal<SavingsGoal[]>(LOCAL_STORAGE_GOALS, []);
   },
 
   async addGoal(goal: Omit<SavingsGoal, 'id' | 'created_at' | 'updated_at'>): Promise<SavingsGoal> {
-    const live = await getLiveSession();
-    if (live) {
-      const result = await live.supabase
-        .from('savings_goals')
-        .insert({ ...goal, user_id: live.userId })
-        .select()
-        .single();
-      return unwrap(result, 'save the savings goal') as SavingsGoal;
-    }
-
+    if (!isSandbox()) return (await api<{ goal: SavingsGoal }>('/api/goals', { method: 'POST', body: goal })).goal;
     const newGoal: SavingsGoal = {
       ...goal,
       id: newLocalId('goal_'),
@@ -345,33 +312,22 @@ export const DataService = {
   },
 
   async updateGoal(id: string, updates: Partial<SavingsGoal>): Promise<SavingsGoal | null> {
-    const live = await getLiveSession();
-    if (live) {
-      const result = await live.supabase
-        .from('savings_goals')
-        .update({ ...updates, updated_at: new Date().toISOString() })
-        .eq('id', id)
-        .select()
-        .single();
-      return unwrap(result, 'update the savings goal') as SavingsGoal;
+    if (!isSandbox()) {
+      return (
+        await api<{ goal: SavingsGoal }>(`/api/goals/${encodeURIComponent(id)}`, { method: 'PATCH', body: updates })
+      ).goal;
     }
-
     const current = readLocal<SavingsGoal[]>(LOCAL_STORAGE_GOALS, []);
-    const updated = current.map((g) =>
-      g.id === id ? { ...g, ...updates, updated_at: new Date().toISOString() } : g
-    );
+    const updated = current.map((g) => (g.id === id ? { ...g, ...updates, updated_at: new Date().toISOString() } : g));
     writeLocal(LOCAL_STORAGE_GOALS, updated);
     return updated.find((g) => g.id === id) || null;
   },
 
   async deleteGoal(id: string): Promise<boolean> {
-    const live = await getLiveSession();
-    if (live) {
-      const { error } = await live.supabase.from('savings_goals').delete().eq('id', id);
-      throwIfError(error, 'delete the savings goal');
+    if (!isSandbox()) {
+      await api(`/api/goals/${encodeURIComponent(id)}`, { method: 'DELETE' });
       return true;
     }
-
     const current = readLocal<SavingsGoal[]>(LOCAL_STORAGE_GOALS, []);
     writeLocal(LOCAL_STORAGE_GOALS, current.filter((g) => g.id !== id));
     return true;
@@ -379,175 +335,53 @@ export const DataService = {
 
   // Seed sample transactions if completely empty in demo mode so the user can see features immediately
   async seedDemoDataIfEmpty(): Promise<void> {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || !isSandbox()) return;
     const existing = localStorage.getItem(LOCAL_STORAGE_TRANSACTIONS);
     if (!existing || JSON.parse(existing).length === 0) {
-      const sampleTxs: Transaction[] = [
-        {
-          id: 'demo-1',
-          user_id: 'demo-user-1',
-          category_id: 'cat-salary',
-          transaction_type: 'income',
-          amount: 85000,
-          currency: 'INR',
-          description: 'Monthly Salary Credit',
-          merchant: 'Tech Corp India',
-          payment_method: 'Direct Bank Transfer',
-          purchase_date: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-          purchase_time: '10:00:00',
-          occurred_at: new Date().toISOString(),
-          entry_method: 'manual',
-          original_input: null,
-          ai_extraction: null,
-          essentiality: 'essential',
-          classification_confidence: 1.0,
-          classification_reason: 'Regular verified monthly employment income',
-          user_corrected_classification: false,
-          review_status: 'confirmed',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 'demo-2',
-          user_id: 'demo-user-1',
-          category_id: 'cat-housing',
-          transaction_type: 'expense',
-          amount: 22000,
-          currency: 'INR',
-          description: 'Apartment Monthly Rent',
-          merchant: 'Landlord',
-          payment_method: 'UPI',
-          purchase_date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-          purchase_time: '11:30:00',
-          occurred_at: new Date().toISOString(),
-          entry_method: 'manual',
-          original_input: null,
-          ai_extraction: null,
-          essentiality: 'essential',
-          classification_confidence: 0.98,
-          classification_reason: 'Basic shelter and housing obligation',
-          user_corrected_classification: false,
-          review_status: 'confirmed',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 'demo-3',
-          user_id: 'demo-user-1',
-          category_id: 'cat-groceries',
-          transaction_type: 'expense',
-          amount: 3450,
-          currency: 'INR',
-          description: 'Weekly Supermarket Supplies',
-          merchant: 'Nature Basket',
-          payment_method: 'Credit Card',
-          purchase_date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-          purchase_time: '17:45:00',
-          occurred_at: new Date().toISOString(),
-          entry_method: 'ai_text',
-          original_input: 'Spent 3450 at Nature Basket for weekly groceries',
-          ai_extraction: null,
-          essentiality: 'essential',
-          classification_confidence: 0.95,
-          classification_reason: 'Core sustenance nutrition',
-          user_corrected_classification: false,
-          review_status: 'confirmed',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 'demo-4',
-          user_id: 'demo-user-1',
-          category_id: 'cat-food',
-          transaction_type: 'expense',
-          amount: 850,
-          currency: 'INR',
-          description: 'Gourmet Pizza Dinner',
-          merchant: 'Swiggy',
-          payment_method: 'UPI',
-          purchase_date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-          purchase_time: '20:15:00',
-          occurred_at: new Date().toISOString(),
-          entry_method: 'ai_voice',
-          original_input: 'Order pizza on swiggy for 850',
-          ai_extraction: null,
-          essentiality: 'optimizable',
-          classification_confidence: 0.88,
-          classification_reason: 'Restaurant delivery is optimizable compared to home cooking',
-          user_corrected_classification: false,
-          review_status: 'confirmed',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 'demo-5',
-          user_id: 'demo-user-1',
-          category_id: 'cat-entertainment',
-          transaction_type: 'expense',
-          amount: 1499,
-          currency: 'INR',
-          description: 'Weekend IMAX Movie & Popcorn',
-          merchant: 'PVR Inox',
-          payment_method: 'Credit Card',
-          purchase_date: new Date().toISOString().split('T')[0],
-          purchase_time: '21:00:00',
-          occurred_at: new Date().toISOString(),
-          entry_method: 'manual',
-          original_input: null,
-          ai_extraction: null,
-          essentiality: 'discretionary',
-          classification_confidence: 0.95,
-          classification_reason: 'Optional leisure entertainment',
-          user_corrected_classification: false,
-          review_status: 'confirmed',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-      ];
+      const sampleTxs = buildDemoTransactions(new Date());
       localStorage.setItem(LOCAL_STORAGE_TRANSACTIONS, JSON.stringify(sampleTxs));
 
-      // Sample budgets
+      const stamp = new Date().toISOString();
+      const today = toLocalDateString();
+      const budget = (id: string, categoryId: string | null, amount: number): Budget => ({
+        id,
+        user_id: 'demo-user-1',
+        category_id: categoryId,
+        amount,
+        period_type: 'monthly',
+        start_date: today,
+        end_date: null,
+        alert_thresholds: [75, 90, 100],
+        created_at: stamp,
+        updated_at: stamp,
+      });
       const sampleBudgets: Budget[] = [
-        {
-          id: 'bgt-overall',
-          user_id: 'demo-user-1',
-          category_id: null,
-          amount: 55000,
-          period_type: 'monthly',
-          start_date: new Date().toISOString().split('T')[0],
-          end_date: null,
-          alert_thresholds: [75, 90, 100],
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 'bgt-food',
-          user_id: 'demo-user-1',
-          category_id: 'cat-food',
-          amount: 8000,
-          period_type: 'monthly',
-          start_date: new Date().toISOString().split('T')[0],
-          end_date: null,
-          alert_thresholds: [75, 90, 100],
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
+        budget('bgt-overall', null, 55000),
+        budget('bgt-food', 'cat-food', 6000),
+        budget('bgt-transport', 'cat-transport', 5500),
+        budget('bgt-shopping', 'cat-shopping', 4000),
       ];
       localStorage.setItem(LOCAL_STORAGE_BUDGETS, JSON.stringify(sampleBudgets));
 
-      // Sample goal
-      const sampleGoals: SavingsGoal[] = [
-        {
-          id: 'goal-emergency',
+      const goal = (id: string, name: string, target: number, current: number, monthsAhead: number, description: string): SavingsGoal => {
+        const due = new Date();
+        due.setMonth(due.getMonth() + monthsAhead);
+        return {
+          id,
           user_id: 'demo-user-1',
-          name: 'Emergency Fund (6 Months)',
-          target_amount: 300000,
-          current_amount: 185000,
-          target_date: '2027-12-31',
-          description: '6 months of essential living expenses safely in liquid reserves',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
+          name,
+          target_amount: target,
+          current_amount: current,
+          target_date: toLocalDateString(due),
+          description,
+          created_at: stamp,
+          updated_at: stamp,
+        };
+      };
+      const sampleGoals: SavingsGoal[] = [
+        goal('goal-emergency', 'Emergency fund', 300000, 185000, 14, 'Six months of essential expenses'),
+        goal('goal-laptop', 'New laptop', 120000, 42000, 6, 'For freelance work'),
+        goal('goal-trip', 'Goa trip', 40000, 40000, 2, 'With college friends'),
       ];
       localStorage.setItem(LOCAL_STORAGE_GOALS, JSON.stringify(sampleGoals));
     }

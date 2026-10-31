@@ -1,202 +1,202 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Sparkles, Lock, Mail, ArrowRight, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
-import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
-import { toast } from 'sonner';
+import { Field } from '@/components/ui/label';
+import { Logo } from '@/components/layout/logo';
+import { ThemeToggle } from '@/components/ui/theme-toggle';
+import { enterSandbox, fetchCurrentUser, lookupEmail, signIn, signUp } from '@/lib/auth-client';
+
+type Step = 'email' | 'password' | 'create';
+
+const COPY: Record<Step, { title: string; description: string }> = {
+  email: { title: 'Sign in or create an account', description: 'Enter your email to continue.' },
+  password: { title: 'Welcome back', description: 'Enter your password to sign in.' },
+  create: { title: 'Create your account', description: "You're new here. Choose a password to get started." },
+};
+
+function nextPath(): string {
+  const next = new URLSearchParams(window.location.search).get('next');
+  // Only allow same-site relative paths.
+  return next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
+}
 
 export default function LoginPage() {
   const router = useRouter();
+  const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isEmailUnconfirmed, setIsEmailUnconfirmed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
-  const handleLogin = async (e: React.FormEvent) => {
+  // Already signed in? Skip the form.
+  useEffect(() => {
+    fetchCurrentUser()
+      .then((user) => user && router.replace(nextPath()))
+      .catch(() => undefined);
+  }, [router]);
+
+  useEffect(() => {
+    if (step !== 'email') passwordRef.current?.focus();
+  }, [step]);
+
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMessage(null);
-    setIsEmailUnconfirmed(false);
+    setError(null);
     setLoading(true);
-
     try {
-      if (!isSupabaseConfigured()) {
-        document.cookie = 'spendwise_demo_session=true; path=/; max-age=86400';
-        toast.success('Signed in using local sandbox mode');
-        window.location.href = '/dashboard';
-        return;
+      if (step === 'email') {
+        const { exists } = await lookupEmail(email);
+        setStep(exists ? 'password' : 'create');
+      } else if (step === 'password') {
+        await signIn(email, password);
+        window.location.href = nextPath();
+      } else {
+        await signUp(email, password, name.trim() || undefined);
+        window.location.href = '/onboarding';
       }
-
-      const supabase = createClient();
-      if (!supabase) {
-        throw new Error('Supabase client could not be initialized');
-      }
-
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        if (error.message.toLowerCase().includes('email not confirmed')) {
-          setIsEmailUnconfirmed(true);
-          setErrorMessage('Your email has not been confirmed yet. Please check your inbox for the Supabase confirmation link, or disable "Confirm email" in Supabase Auth settings.');
-        } else {
-          setErrorMessage(error.message);
-        }
-        toast.error(error.message);
-        return;
-      }
-
-      if (data?.user) {
-        // Clear any demo cookie
-        document.cookie = 'spendwise_demo_session=; path=/; max-age=0';
-        toast.success('Welcome back!');
-        window.location.href = '/dashboard';
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'An unexpected error occurred';
-      setErrorMessage(msg);
-      toast.error(msg);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDemoSignIn = () => {
-    document.cookie = 'spendwise_demo_session=true; path=/; max-age=86400';
-    toast.success('Entering sandbox session');
+  const back = () => {
+    setStep('email');
+    setPassword('');
+    setError(null);
+  };
+
+  const startDemo = () => {
+    enterSandbox();
     window.location.href = '/dashboard';
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-[#090d16] px-4 py-12">
-      <div className="w-full max-w-md space-y-6">
-        {/* Brand Header */}
-        <div className="flex flex-col items-center text-center space-y-2">
-          <div className="h-12 w-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-200 dark:shadow-none">
-            <Sparkles className="h-6 w-6" />
+    <div className="relative flex min-h-screen flex-col bg-background">
+      <div className="pointer-events-none absolute inset-0 bg-grid [mask-image:radial-gradient(ellipse_at_top,black,transparent_70%)]" />
+
+      <header className="relative flex h-14 items-center justify-between px-5">
+        <Link href="/" className="flex items-center gap-2">
+          <Logo />
+          <span className="text-[15px] font-semibold tracking-tight">SpendWise</span>
+        </Link>
+        <ThemeToggle />
+      </header>
+
+      <main className="relative flex flex-1 items-start justify-center px-5 pt-[12vh] pb-16">
+        <div className="w-full max-w-[380px] animate-rise">
+          <div className="mb-8 space-y-2 text-center">
+            <h1 className="text-2xl font-semibold tracking-[-0.02em]">{COPY[step].title}</h1>
+            <p className="text-sm text-muted-foreground">{COPY[step].description}</p>
           </div>
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-            Sign in to SpendWise AI
-          </h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Understand your spending and make smarter money decisions.
-          </p>
-        </div>
 
-        {/* Login Card */}
-        <Card className="shadow-lg border-slate-200/80 dark:border-slate-800">
-          <form onSubmit={handleLogin}>
-            <CardHeader className="space-y-1">
-              <CardTitle className="text-xl">Account Login</CardTitle>
-              <CardDescription>
-                Enter your credentials to access your financial dashboard
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {errorMessage && (
-                <div className="p-3.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4 shrink-0" />
-                    <span className="font-medium">{errorMessage}</span>
-                  </div>
-                  {isEmailUnconfirmed && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={handleDemoSignIn}
-                      className="w-full text-xs mt-2"
-                    >
-                      Bypass & Enter via Sandbox Mode
-                    </Button>
-                  )}
-                </div>
-              )}
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                  <Mail className="h-3.5 w-3.5 text-slate-500" />
-                  Email Address
-                </label>
+          <form onSubmit={submit} className="space-y-4">
+            {step === 'email' ? (
+              <Field label="Email" htmlFor="email">
                 <Input
+                  id="email"
                   type="email"
-                  placeholder="name@gmail.com"
+                  autoComplete="email"
+                  autoFocus
+                  required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  required
+                  placeholder="you@example.com"
+                  className="h-10"
                 />
-              </div>
-
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <Lock className="h-3.5 w-3.5 text-slate-500" />
-                    Password
-                  </label>
-                  <Link
-                    href="/forgot-password"
-                    className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
-                  >
-                    Forgot password?
-                  </Link>
-                </div>
-                <Input
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </div>
-
-              <Button
-                type="submit"
-                disabled={loading}
-                className="w-full gap-2 font-medium"
-              >
-                {loading ? 'Signing in...' : 'Sign In'}
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-            </CardContent>
-            <CardFooter className="flex flex-col space-y-3 pt-0">
-              <div className="relative w-full text-center">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-slate-200 dark:border-slate-800" />
-                </div>
-                <span className="relative bg-white dark:bg-slate-900 px-2 text-[11px] text-slate-500 uppercase">
-                  Quick Access
-                </span>
-              </div>
-
-              <Button
+              </Field>
+            ) : (
+              <button
                 type="button"
-                variant="outline"
-                onClick={handleDemoSignIn}
-                className="w-full text-xs font-medium text-slate-700 dark:text-slate-300"
+                onClick={back}
+                className="flex w-full items-center justify-between rounded-lg border border-border bg-card px-3 py-2.5 text-left text-sm shadow-card transition-colors hover:bg-accent"
               >
-                Explore Sandbox Demo (No signup required)
-              </Button>
+                <span className="truncate">{email}</span>
+                <span className="ml-3 shrink-0 text-xs text-muted-foreground">Change</span>
+              </button>
+            )}
 
-              <p className="text-center text-xs text-slate-500 dark:text-slate-400">
-                Don&apos;t have an account?{' '}
-                <Link
-                  href="/signup"
-                  className="font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
-                >
-                  Create one now
-                </Link>
+            {step === 'create' && (
+              <Field label="Your name" htmlFor="name" hint="Optional. Shown in the app only.">
+                <Input id="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className="h-10" />
+              </Field>
+            )}
+
+            {step !== 'email' && (
+              <Field
+                label={step === 'create' ? 'Choose a password' : 'Password'}
+                htmlFor="password"
+                hint={step === 'create' ? 'At least 8 characters.' : undefined}
+              >
+                <div className="relative">
+                  <Input
+                    ref={passwordRef}
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete={step === 'create' ? 'new-password' : 'current-password'}
+                    required
+                    minLength={step === 'create' ? 8 : 1}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="h-10 pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground hover:text-foreground"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                </div>
+              </Field>
+            )}
+
+            {error && (
+              <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[13px] text-destructive">
+                {error}
               </p>
-            </CardFooter>
+            )}
+
+            <Button type="submit" size="lg" className="w-full" loading={loading}>
+              {step === 'email' ? 'Continue' : step === 'password' ? 'Sign in' : 'Create account'}
+              {!loading && <ArrowRight />}
+            </Button>
+
+            {step !== 'email' && (
+              <button
+                type="button"
+                onClick={back}
+                className="mx-auto flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"
+              >
+                <ArrowLeft className="size-3.5" /> Use a different email
+              </button>
+            )}
           </form>
-        </Card>
-      </div>
+
+          <div className="my-8 flex items-center gap-3 text-xs text-subtle">
+            <div className="h-px flex-1 bg-border" />
+            or
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
+          <Button variant="outline" size="lg" className="w-full" onClick={startDemo}>
+            Try the demo
+          </Button>
+          <p className="mt-3 text-center text-xs text-muted-foreground">
+            The demo uses sample data saved only in this browser.
+          </p>
+        </div>
+      </main>
     </div>
   );
 }

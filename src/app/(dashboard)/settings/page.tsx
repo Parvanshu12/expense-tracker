@@ -1,335 +1,447 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import {
-  User,
-  Globe,
-  DollarSign,
-  Clock,
-  Sparkles,
-  ShieldCheck,
-  LogOut,
-  Save,
-  CheckCircle2,
-  Database,
-  Moon,
-  Sun,
-  AlertCircle,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { DataService } from '@/lib/data-service';
-import { Profile } from '@/types/database';
-import { isSupabaseConfigured, createClient } from '@/lib/supabase/client';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import { LogOut, Monitor, Moon, Sun } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
+import { PageHeader } from '@/components/ui/page-header';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { Card, CardContent, CardFooter } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Field } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
+import { Segmented } from '@/components/ui/segmented';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useSession } from '@/components/layout/session-provider';
+import { signOut } from '@/lib/auth-client';
+import { DataService } from '@/lib/data-service';
+import type { Profile } from '@/types/database';
+
+type ThemeChoice = 'light' | 'dark' | 'system';
+
+interface ProfileForm {
+  displayName: string;
+  monthlyIncome: string;
+}
+
+interface PreferencesForm {
+  currency: string;
+  timezone: string;
+  language: string;
+}
+
+const CURRENCIES = [
+  { value: 'INR', label: 'INR — Indian rupee' },
+  { value: 'USD', label: 'USD — US dollar' },
+  { value: 'EUR', label: 'EUR — Euro' },
+  { value: 'GBP', label: 'GBP — British pound' },
+  { value: 'AED', label: 'AED — UAE dirham' },
+  { value: 'SGD', label: 'SGD — Singapore dollar' },
+];
+
+const TIMEZONES = [
+  { value: 'Asia/Kolkata', label: 'Asia/Kolkata (IST)' },
+  { value: 'America/New_York', label: 'America/New_York (ET)' },
+  { value: 'Europe/London', label: 'Europe/London (UK)' },
+  { value: 'Asia/Dubai', label: 'Asia/Dubai (GST)' },
+  { value: 'Asia/Singapore', label: 'Asia/Singapore (SGT)' },
+];
+
+const LANGUAGES = [
+  { value: 'en', label: 'English' },
+  { value: 'hinglish', label: 'Hinglish (Hindi + English)' },
+];
+
+const subscribeNoop = () => () => {};
+
+/** True after hydration; false during SSR and the hydration pass. */
+function useMounted() {
+  return useSyncExternalStore(
+    subscribeNoop,
+    () => true,
+    () => false
+  );
+}
+
+function toProfileForm(p: Profile): ProfileForm {
+  return { displayName: p.display_name || '', monthlyIncome: p.monthly_income ? String(p.monthly_income) : '' };
+}
+
+function toPreferencesForm(p: Profile): PreferencesForm {
+  return { currency: p.currency || 'INR', timezone: p.timezone || 'Asia/Kolkata', language: p.language || 'en' };
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'SW';
+  return parts
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join('')
+    .toUpperCase();
+}
+
+function Section({
+  title,
+  description,
+  children,
+  delay,
+}: {
+  title: string;
+  description: React.ReactNode;
+  children: React.ReactNode;
+  delay?: number;
+}) {
+  return (
+    <section
+      className="grid animate-rise gap-4 py-8 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)] md:gap-10"
+      style={delay ? { animationDelay: `${delay}ms` } : undefined}
+    >
+      <div className="space-y-1">
+        <h2 className="text-sm font-medium text-foreground">{title}</h2>
+        <p className="text-[13px] leading-relaxed text-muted-foreground">{description}</p>
+      </div>
+      <div className="min-w-0">{children}</div>
+    </section>
+  );
+}
+
+function SaveFooter({ hint, dirty, saving }: { hint: React.ReactNode; dirty: boolean; saving: boolean }) {
+  return (
+    <CardFooter className="justify-between gap-3 rounded-b-xl bg-muted/40">
+      <p className="text-xs text-muted-foreground">{hint}</p>
+      <Button type="submit" size="sm" disabled={!dirty} loading={saving}>
+        Save
+      </Button>
+    </CardFooter>
+  );
+}
+
+function SettingsSkeleton() {
+  return (
+    <div className="space-y-8">
+      <div className="space-y-2">
+        <Skeleton className="h-7 w-32" />
+        <Skeleton className="h-4 w-64" />
+      </div>
+      <div className="divide-y divide-border border-t border-border">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="grid gap-4 py-8 md:grid-cols-[240px_1fr] md:gap-10">
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-3 w-44" />
+            </div>
+            <Skeleton className="h-44 w-full rounded-xl" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
-  const router = useRouter();
+  const { user, refresh } = useSession();
   const { theme, setTheme } = useTheme();
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [supabaseReady, setSupabaseReady] = useState(false);
+  const mounted = useMounted();
 
-  // Form states
-  const [displayName, setDisplayName] = useState('');
-  const [currency, setCurrency] = useState('INR');
-  const [timezone, setTimezone] = useState('Asia/Kolkata');
-  const [language, setLanguage] = useState('en');
-  const [monthlyIncome, setMonthlyIncome] = useState<string>('');
+  const [loading, setLoading] = useState(true);
+  const [saved, setSaved] = useState<Profile | null>(null);
+  const [profileForm, setProfileForm] = useState<ProfileForm>({ displayName: '', monthlyIncome: '' });
+  const [prefsForm, setPrefsForm] = useState<PreferencesForm>({
+    currency: 'INR',
+    timezone: 'Asia/Kolkata',
+    language: 'en',
+  });
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingPrefs, setSavingPrefs] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
-    async function loadProfile() {
+    let cancelled = false;
+    async function load() {
       try {
         const prof = await DataService.getProfile();
-        if (prof) {
-          setDisplayName(prof.display_name || '');
-          setCurrency(prof.currency || 'INR');
-          setTimezone(prof.timezone || 'Asia/Kolkata');
-          setLanguage(prof.language || 'en');
-          if (prof.monthly_income) setMonthlyIncome(prof.monthly_income.toString());
-        }
-        setSupabaseReady(isSupabaseConfigured());
+        if (cancelled) return;
+        setSaved(prof);
+        setProfileForm(toProfileForm(prof));
+        setPrefsForm(toPreferencesForm(prof));
       } catch (err) {
         console.error(err);
-        toast.error(err instanceof Error ? err.message : 'Could not load your profile');
+        if (!cancelled) toast.error(err instanceof Error ? err.message : 'Could not load your profile');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
-    loadProfile();
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const handleSavePreferences = async (e: React.FormEvent) => {
+  const savedProfileForm = saved ? toProfileForm(saved) : null;
+  const savedPrefsForm = saved ? toPreferencesForm(saved) : null;
+  const profileDirty =
+    !savedProfileForm ||
+    savedProfileForm.displayName !== profileForm.displayName ||
+    savedProfileForm.monthlyIncome !== profileForm.monthlyIncome;
+  const prefsDirty =
+    !savedPrefsForm ||
+    savedPrefsForm.currency !== prefsForm.currency ||
+    savedPrefsForm.timezone !== prefsForm.timezone ||
+    savedPrefsForm.language !== prefsForm.language;
+
+  async function save(patch: Partial<Profile>, successMessage: string) {
+    const updated = await DataService.updateProfile(patch);
+    setSaved(updated);
+    toast.success(successMessage);
+    void refresh();
+    return updated;
+  }
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSaving(true);
+    const income = profileForm.monthlyIncome.trim();
+    const parsedIncome = income ? Number(income) : null;
+    if (parsedIncome !== null && (!Number.isFinite(parsedIncome) || parsedIncome < 0)) {
+      toast.error('Monthly income must be a positive number');
+      return;
+    }
+    setSavingProfile(true);
     try {
-      await DataService.updateProfile({
-        display_name: displayName,
-        currency,
-        timezone,
-        language,
-        monthly_income: monthlyIncome ? parseFloat(monthlyIncome) : null,
-      });
-      toast.success('Preferences updated successfully!');
+      const updated = await save(
+        { display_name: profileForm.displayName.trim() || null, monthly_income: parsedIncome },
+        'Profile saved'
+      );
+      setProfileForm(toProfileForm(updated));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update preferences');
+      toast.error(err instanceof Error ? err.message : 'Could not save your profile');
     } finally {
-      setSaving(false);
+      setSavingProfile(false);
+    }
+  };
+
+  const handleSavePrefs = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingPrefs(true);
+    try {
+      const updated = await save(
+        { currency: prefsForm.currency, timezone: prefsForm.timezone, language: prefsForm.language },
+        'Preferences saved'
+      );
+      setPrefsForm(toPreferencesForm(updated));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not save your preferences');
+    } finally {
+      setSavingPrefs(false);
     }
   };
 
   const handleSignOut = async () => {
+    setSigningOut(true);
     try {
-      // Clear demo session cookie first
-      document.cookie = 'spendwise_demo_session=; path=/; max-age=0';
-      if (isSupabaseConfigured()) {
-        const supabase = createClient();
-        if (supabase) await supabase.auth.signOut();
-      }
-      toast.success('Signed out');
-      window.location.href = '/login';
+      await signOut();
     } catch {
-      document.cookie = 'spendwise_demo_session=; path=/; max-age=0';
-      window.location.href = '/login';
+      setSigningOut(false);
+      toast.error('Could not sign out. Please try again.');
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
-      </div>
-    );
-  }
+  if (loading) return <SettingsSkeleton />;
+
+  const sandbox = Boolean(user?.sandbox);
+  const themeValue: ThemeChoice =
+    mounted && (theme === 'light' || theme === 'dark' || theme === 'system') ? theme : 'system';
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Profile & Regional Settings */}
-      <Card>
-        <form onSubmit={handleSavePreferences}>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-base flex items-center gap-2">
-                  <User className="h-4 w-4 text-indigo-600" />
-                  Profile & Localization Preferences
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  Customize your name, reporting currency, and timezone
-                </CardDescription>
-              </div>
-              <Badge variant="outline" className="text-xs">
-                {language === 'hinglish' ? 'Hinglish Mode' : 'English Mode'}
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Avatar Preview */}
-            <div className="flex items-center gap-4 pb-2 border-b border-slate-100 dark:border-slate-800">
-              <div className="h-12 w-12 rounded-full bg-indigo-600 text-white flex items-center justify-center text-base font-bold">
-                {displayName
-                  ? displayName.split(' ').map((w: string) => w[0]).join('').toUpperCase().substring(0, 2)
-                  : 'SW'}
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-slate-900 dark:text-white">{displayName || 'SpendWise User'}</p>
-                <p className="text-xs text-slate-500">Update your display name to personalize the app</p>
-              </div>
-            </div>
+    <div className="space-y-8">
+      <PageHeader title="Settings" description="Manage your profile, preferences and account." />
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Display Name
-                </label>
-                <Input
-                  type="text"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Monthly Baseline Income (₹ INR)
-                </label>
-                <Input
-                  type="number"
-                  placeholder="e.g. 85000"
-                  value={monthlyIncome}
-                  onChange={(e) => setMonthlyIncome(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                  <DollarSign className="h-3.5 w-3.5 text-slate-500" />
-                  Primary Currency
-                </label>
-                <select
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
-                  className="w-full h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-900 dark:text-slate-100 focus:outline-none"
-                >
-                  <option value="INR">₹ INR (Indian Rupee)</option>
-                  <option value="USD">$ USD (US Dollar)</option>
-                  <option value="EUR">€ EUR (Euro)</option>
-                  <option value="GBP">£ GBP (British Pound)</option>
-                  <option value="AED">AED (UAE Dirham)</option>
-                  <option value="SGD">S$ SGD (Singapore Dollar)</option>
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                  <Clock className="h-3.5 w-3.5 text-slate-500" />
-                  Timezone
-                </label>
-                <select
-                  value={timezone}
-                  onChange={(e) => setTimezone(e.target.value)}
-                  className="w-full h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-900 dark:text-slate-100 focus:outline-none"
-                >
-                  <option value="Asia/Kolkata">Asia/Kolkata (IST)</option>
-                  <option value="America/New_York">America/New_York (EST)</option>
-                  <option value="Europe/London">Europe/London (GMT)</option>
-                  <option value="Asia/Dubai">Asia/Dubai (GST)</option>
-                  <option value="Asia/Singapore">Asia/Singapore (SGT)</option>
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                  <Globe className="h-3.5 w-3.5 text-slate-500" />
-                  Language
-                </label>
-                <select
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value)}
-                  className="w-full h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-900 dark:text-slate-100 focus:outline-none"
-                >
-                  <option value="en">English (Default)</option>
-                  <option value="hinglish">Hinglish (Hindi + English)</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Theme switcher */}
-            <div className="space-y-1.5 pt-2">
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Interface Theme
-              </label>
-              <div className="grid grid-cols-3 gap-3 max-w-sm">
-                <button
-                  type="button"
-                  onClick={() => setTheme('light')}
-                  className={`p-2.5 rounded-lg border text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
-                    theme === 'light'
-                      ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950 text-indigo-600'
-                      : 'border-slate-200 dark:border-slate-800'
-                  }`}
-                >
-                  <Sun className="h-4 w-4" />
-                  <span>Light</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTheme('dark')}
-                  className={`p-2.5 rounded-lg border text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
-                    theme === 'dark'
-                      ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950 text-indigo-400'
-                      : 'border-slate-200 dark:border-slate-800'
-                  }`}
-                >
-                  <Moon className="h-4 w-4" />
-                  <span>Dark</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTheme('system')}
-                  className={`p-2.5 rounded-lg border text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
-                    theme === 'system'
-                      ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950 text-indigo-400'
-                      : 'border-slate-200 dark:border-slate-800'
-                  }`}
-                >
-                  <span>System</span>
-                </button>
-              </div>
-            </div>
-          </CardContent>
-          <CardFooter className="flex justify-between items-center border-t border-slate-100 dark:border-slate-800 pt-4">
-            <span className="text-[11px] text-slate-500">
-              Changes reflect immediately on your dashboard.
-            </span>
-            <Button type="submit" variant="ai" disabled={saving} className="gap-2">
-              <Save className="h-4 w-4" />
-              {saving ? 'Saving...' : 'Save Preferences'}
-            </Button>
-          </CardFooter>
-        </form>
-      </Card>
-
-      {/* Backend & Security Infrastructure Status */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Database className="h-4 w-4 text-emerald-600" />
-            Database & Authentication Status
-          </CardTitle>
-          <CardDescription className="text-xs">
-            Review Supabase integration and Row Level Security isolation
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-800">
-            <div className="flex items-center gap-3">
-              <div
-                className={`h-8 w-8 rounded-lg flex items-center justify-center ${
-                  supabaseReady ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
-                }`}
-              >
-                {supabaseReady ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-              </div>
-              <div>
-                <div className="text-xs font-bold text-slate-900 dark:text-white">
-                  {supabaseReady ? 'Supabase Backend Connected' : 'Local Sandbox Mode Active'}
+      <div className="divide-y divide-border border-t border-border">
+        <Section title="Profile" description="Your name appears in the sidebar. Income is used for savings and budget insights.">
+          <Card>
+            <form onSubmit={handleSaveProfile}>
+              <CardContent className="space-y-5 pt-5">
+                <div className="flex items-center gap-3">
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-foreground text-[13px] font-medium text-background">
+                    {initials(profileForm.displayName)}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {profileForm.displayName.trim() || 'Unnamed'}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {sandbox ? 'Demo account' : user?.email}
+                    </p>
+                  </div>
                 </div>
-                <div className="text-[11px] text-slate-500">
-                  {supabaseReady
-                    ? 'Row Level Security active with PostgreSQL database'
-                    : 'Configure NEXT_PUBLIC_SUPABASE_URL & ANON_KEY in .env.local to sync with remote Supabase'}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Display name" htmlFor="display-name">
+                    <Input
+                      id="display-name"
+                      autoComplete="name"
+                      maxLength={60}
+                      placeholder="Your name"
+                      value={profileForm.displayName}
+                      onChange={(e) => setProfileForm((f) => ({ ...f, displayName: e.target.value }))}
+                    />
+                  </Field>
+                  <Field
+                    label="Monthly income"
+                    htmlFor="monthly-income"
+                    hint={`In ${savedPrefsForm?.currency ?? prefsForm.currency}, after tax.`}
+                  >
+                    <Input
+                      id="monthly-income"
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      step="any"
+                      placeholder="85000"
+                      className="tabular"
+                      value={profileForm.monthlyIncome}
+                      onChange={(e) => setProfileForm((f) => ({ ...f, monthlyIncome: e.target.value }))}
+                    />
+                  </Field>
                 </div>
-              </div>
-            </div>
-            <Badge variant={supabaseReady ? 'success' : 'warning'} className="text-[10px]">
-              {supabaseReady ? 'Live' : 'Sandbox Preview'}
-            </Badge>
-          </div>
+              </CardContent>
+              <SaveFooter hint="Leave income empty if you'd rather not say." dirty={profileDirty} saving={savingProfile} />
+            </form>
+          </Card>
+        </Section>
 
-          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 space-y-1">
-            <div className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-              <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-              Security Architecture
-            </div>
-            <p className="text-[11px] leading-relaxed">
-              All transactions, categories, budgets, and goals are strictly isolated per user account. Database migrations are stored in <code className="bg-slate-200 dark:bg-slate-800 px-1 rounded">supabase/migrations/</code>.
-            </p>
-          </div>
-        </CardContent>
-        <CardFooter className="flex justify-between items-center border-t border-slate-100 dark:border-slate-800 pt-4">
-          <Button variant="destructive" size="sm" onClick={handleSignOut} className="gap-2">
-            <LogOut className="h-3.5 w-3.5" />
-            Sign Out of Account
-          </Button>
-        </CardFooter>
-      </Card>
+        <Section title="Preferences" description="Currency, time zone and the language the assistant replies in." delay={40}>
+          <Card>
+            <form onSubmit={handleSavePrefs}>
+              <CardContent className="grid gap-4 pt-5 sm:grid-cols-2">
+                <Field label="Currency" htmlFor="currency">
+                  <Select
+                    id="currency"
+                    value={prefsForm.currency}
+                    onChange={(e) => setPrefsForm((f) => ({ ...f, currency: e.target.value }))}
+                  >
+                    {CURRENCIES.map((c) => (
+                      <option key={c.value} value={c.value}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Time zone" htmlFor="timezone" hint="Used to decide which day an expense falls on.">
+                  <Select
+                    id="timezone"
+                    value={prefsForm.timezone}
+                    onChange={(e) => setPrefsForm((f) => ({ ...f, timezone: e.target.value }))}
+                  >
+                    {TIMEZONES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Language" htmlFor="language" className="sm:col-span-2 sm:max-w-[calc(50%-0.5rem)]">
+                  <Select
+                    id="language"
+                    value={prefsForm.language}
+                    onChange={(e) => setPrefsForm((f) => ({ ...f, language: e.target.value }))}
+                  >
+                    {LANGUAGES.map((l) => (
+                      <option key={l.value} value={l.value}>
+                        {l.label}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </CardContent>
+              <SaveFooter hint="Applies across the dashboard." dirty={prefsDirty} saving={savingPrefs} />
+            </form>
+          </Card>
+        </Section>
+
+        <Section title="Appearance" description="Choose a theme, or follow your system setting." delay={80}>
+          <Card>
+            <CardContent className="flex flex-col gap-3 pt-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-0.5">
+                <p className="text-[13px] font-medium text-foreground">Theme</p>
+                <p className="text-xs text-muted-foreground">Saved on this device.</p>
+              </div>
+              <Segmented<ThemeChoice>
+                value={themeValue}
+                onChange={setTheme}
+                options={[
+                  { value: 'light', label: <><Sun aria-hidden />Light</> },
+                  { value: 'dark', label: <><Moon aria-hidden />Dark</> },
+                  { value: 'system', label: <><Monitor aria-hidden />System</> },
+                ]}
+              />
+            </CardContent>
+          </Card>
+        </Section>
+
+        <Section
+          title="Account"
+          description={sandbox ? 'You are trying SpendWise in demo mode.' : 'The email you sign in with.'}
+          delay={120}
+        >
+          <Card>
+            {sandbox ? (
+              <>
+                <CardContent className="space-y-1 pt-5">
+                  <p className="text-sm font-medium text-foreground">Demo mode</p>
+                  <p className="text-[13px] text-muted-foreground">
+                    Demo data is stored only in this browser. Create an account to keep your data and use it on
+                    any device.
+                  </p>
+                </CardContent>
+                <CardFooter className="flex-wrap justify-end gap-2 rounded-b-xl bg-muted/40">
+                  <Button variant="ghost" size="sm" onClick={handleSignOut} loading={signingOut}>
+                    <LogOut aria-hidden />
+                    Exit demo
+                  </Button>
+                  <a
+                    href="/login"
+                    className={buttonVariants({ size: 'sm' })}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      void handleSignOut();
+                    }}
+                  >
+                    Create a real account
+                  </a>
+                </CardFooter>
+              </>
+            ) : (
+              <>
+                <CardContent className="pt-5">
+                  <Field label="Email" htmlFor="account-email">
+                    <Input id="account-email" value={user?.email ?? ''} readOnly disabled />
+                  </Field>
+                </CardContent>
+                <CardFooter className="justify-between gap-3 rounded-b-xl bg-muted/40">
+                  <p className="text-xs text-muted-foreground">Signing out ends this session on this device.</p>
+                  <Button variant="outline" size="sm" onClick={handleSignOut} loading={signingOut}>
+                    <LogOut aria-hidden />
+                    Sign out
+                  </Button>
+                </CardFooter>
+              </>
+            )}
+          </Card>
+        </Section>
+
+        <Section title="Danger zone" description="Irreversible actions." delay={160}>
+          <Card className="border-destructive/30">
+            <CardContent className="space-y-1 pt-5">
+              <p className="text-sm font-medium text-destructive">Delete account</p>
+              <p className="text-[13px] text-muted-foreground">
+                {sandbox
+                  ? "Demo data lives only in this browser. Clearing this site's data in your browser settings removes it permanently."
+                  : 'Account deletion is not self-serve yet. To permanently remove your account and all of its data, contact support.'}
+              </p>
+            </CardContent>
+          </Card>
+        </Section>
+      </div>
     </div>
   );
 }

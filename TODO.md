@@ -45,3 +45,10 @@
 - [x] **Phase 8: Quality Assurance, Security & Deployment**
   - [x] Unit & calculation tests (math formulas, date/timezone handling, RLS isolation verification).
   - [x] Production build validation (`npm run build`), zero TypeScript/lint errors.
+
+- [x] **Phase 9: Cloudflare-native rebuild**
+  - [x] Replaced Supabase with Cloudflare D1 and the app's own email + password auth (single email-first form).
+  - [x] Workers AI worker (`workers/spendwise-ai`): JSON-mode extraction, streamed money coach, Whisper voice capture.
+  - [x] Deployed with OpenNext to Cloudflare Workers.
+  - [x] Monochrome design system and redesign of every page.
+  - [ ] Password reset (needs an email sender).

@@ -1,322 +1,418 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
-  TrendingUp,
-  Sparkles,
-  Info,
-  DollarSign,
-  Calendar,
-  AlertCircle,
-  HelpCircle,
-  ShieldAlert,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { simulateWealthGrowth } from '@/lib/calculations/finance';
-import { formatCurrency } from '@/lib/utils';
-import {
-  ResponsiveContainer,
-  AreaChart,
   Area,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  Tooltip,
-  Legend,
 } from 'recharts';
+import { PageHeader } from '@/components/ui/page-header';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Field, Label } from '@/components/ui/label';
+import { Stat } from '@/components/ui/stat';
+import { useSession } from '@/components/layout/session-provider';
+import { simulateWealthGrowth } from '@/lib/calculations/finance';
+import { formatCurrency } from '@/lib/utils';
+import type { WealthSimulationYearResult } from '@/types/finance';
+
+type ScenarioKey = 'conservative' | 'moderate' | 'aggressive';
+
+interface Scenario {
+  key: ScenarioKey;
+  label: string;
+  description: string;
+  rate: number;
+  color: string;
+}
+
+const SCENARIOS: Scenario[] = [
+  { key: 'conservative', label: 'Conservative', description: 'Debt / fixed income', rate: 7, color: 'var(--chart-3)' },
+  { key: 'moderate', label: 'Moderate', description: 'Broad index funds', rate: 10, color: 'var(--chart-2)' },
+  { key: 'aggressive', label: 'Aggressive', description: 'Growth equity', rate: 12, color: 'var(--chart-1)' },
+];
+
+interface ChartPoint {
+  year: number;
+  invested: number;
+  conservative: number;
+  moderate: number;
+  aggressive: number;
+  moderateReal: number;
+}
+
+const tooltipStyle = {
+  background: 'var(--popover)',
+  border: '1px solid var(--border)',
+  borderRadius: 10,
+  fontSize: 12,
+  color: 'var(--foreground)',
+  boxShadow: 'var(--shadow-pop)',
+};
+
+const axisTick = { fill: 'var(--muted-foreground)', fontSize: 11 };
+
+function parseAmount(raw: string): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function RangeField({
+  id,
+  label,
+  value,
+  display,
+  min,
+  max,
+  step,
+  onChange,
+  hint,
+}: {
+  id: string;
+  label: string;
+  value: number;
+  display: string;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (value: number) => void;
+  hint?: string;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <Label htmlFor={id}>{label}</Label>
+        <span className="tabular text-[13px] font-medium text-foreground">{display}</span>
+      </div>
+      <input
+        id={id}
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="h-1.5 w-full cursor-pointer"
+        style={{ accentColor: 'var(--foreground)' }}
+      />
+      <div className="tabular flex justify-between text-xs text-subtle">
+        <span>{min}</span>
+        <span>{max}</span>
+      </div>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
 
 export default function WealthSimulatorPage() {
-  const [startingAmount, setStartingAmount] = useState<number>(50000);
-  const [monthlyContribution, setMonthlyContribution] = useState<number>(10000);
-  const [annualReturnRate, setAnnualReturnRate] = useState<number>(12); // 12% default
-  const [durationYears, setDurationYears] = useState<number>(15);
-  const [inflationRate, setInflationRate] = useState<number>(6); // 6% default inflation adjustment
+  const { user } = useSession();
+  const currency = user?.currency || 'INR';
 
-  // Calculate year by year simulation
-  const simulationResults = useMemo(() => {
-    return simulateWealthGrowth({
-      startingAmount,
-      monthlyContribution,
-      annualReturnRate,
-      durationYears,
-      inflationRate,
-    });
-  }, [startingAmount, monthlyContribution, annualReturnRate, durationYears, inflationRate]);
+  const [startingRaw, setStartingRaw] = useState('50000');
+  const [monthlyRaw, setMonthlyRaw] = useState('10000');
+  const [durationYears, setDurationYears] = useState(20);
+  const [inflationRate, setInflationRate] = useState(6);
 
-  const finalYear = simulationResults[simulationResults.length - 1] || {
-    totalInvested: 0,
-    hypotheticalGrowth: 0,
-    futureValue: 0,
-    inflationAdjustedValue: 0,
+  const startingAmount = parseAmount(startingRaw);
+  const monthlyContribution = parseAmount(monthlyRaw);
+
+  const results = useMemo(() => {
+    const byScenario = {} as Record<ScenarioKey, WealthSimulationYearResult[]>;
+    for (const sc of SCENARIOS) {
+      byScenario[sc.key] = simulateWealthGrowth({
+        startingAmount,
+        monthlyContribution,
+        annualReturnRate: sc.rate,
+        durationYears,
+        inflationRate,
+      });
+    }
+    return byScenario;
+  }, [startingAmount, monthlyContribution, durationYears, inflationRate]);
+
+  const chartData = useMemo<ChartPoint[]>(() => {
+    const start: ChartPoint = {
+      year: 0,
+      invested: startingAmount,
+      conservative: startingAmount,
+      moderate: startingAmount,
+      aggressive: startingAmount,
+      moderateReal: startingAmount,
+    };
+    const rows = results.moderate.map((m, i) => ({
+      year: m.year,
+      invested: m.totalInvested,
+      conservative: results.conservative[i].futureValue,
+      moderate: m.futureValue,
+      aggressive: results.aggressive[i].futureValue,
+      moderateReal: m.inflationAdjustedValue ?? m.futureValue,
+    }));
+    return [start, ...rows];
+  }, [results, startingAmount]);
+
+  const tableRows = useMemo(
+    () => chartData.filter((p) => p.year > 0 && (p.year % 5 === 0 || p.year === durationYears)),
+    [chartData, durationYears]
+  );
+
+  const totalInvested = startingAmount + monthlyContribution * 12 * durationYears;
+  const showReal = inflationRate > 0;
+
+  const money = (v: number) => formatCurrency(v, currency);
+  const compact = useMemo(() => {
+    try {
+      return new Intl.NumberFormat('en-IN', {
+        style: 'currency',
+        currency,
+        notation: 'compact',
+        maximumFractionDigits: 1,
+      });
+    } catch {
+      return new Intl.NumberFormat('en-IN', { notation: 'compact', maximumFractionDigits: 1 });
+    }
+  }, [currency]);
+
+  const seriesName: Record<string, string> = {
+    invested: 'Invested',
+    conservative: 'Conservative 7%',
+    moderate: 'Moderate 10%',
+    aggressive: 'Aggressive 12%',
+    moderateReal: "Moderate, today's money",
   };
 
   return (
     <div className="space-y-6">
-      {/* Intro Header */}
-      <div>
-        <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-          <span>Long-Term Wealth Projection Simulator</span>
-          <Badge variant="outline" className="text-[10px] text-indigo-600 border-indigo-200">
-            Educational Scenario Engine
-          </Badge>
-        </h2>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Simulate hypothetical compound interest trajectories based on disciplined monthly contributions.
-        </p>
-      </div>
+      <PageHeader
+        title="Wealth simulator"
+        description="See how steady monthly investing could compound over time. Educational only."
+      />
 
-      {/* Main Grid: Controls vs Chart & Results */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Interactive Input Controls */}
-        <Card className="p-5 space-y-4">
-          <CardTitle className="text-base">Scenario Variables</CardTitle>
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-              Starting Lump Sum (₹)
-            </label>
-            <Input
-              type="number"
-              step="5000"
-              value={startingAmount}
-              onChange={(e) => setStartingAmount(Math.max(0, parseFloat(e.target.value) || 0))}
+      <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
+        {/* Inputs */}
+        <Card className="h-fit animate-rise">
+          <CardHeader>
+            <CardTitle>Inputs</CardTitle>
+            <CardDescription>Adjust the assumptions.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <Field label="Starting amount" htmlFor="starting-amount">
+              <Input
+                id="starting-amount"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step={5000}
+                value={startingRaw}
+                onChange={(e) => setStartingRaw(e.target.value)}
+                className="tabular"
+              />
+            </Field>
+            <Field label="Monthly contribution" htmlFor="monthly-contribution">
+              <Input
+                id="monthly-contribution"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step={1000}
+                value={monthlyRaw}
+                onChange={(e) => setMonthlyRaw(e.target.value)}
+                className="tabular"
+              />
+            </Field>
+            <RangeField
+              id="duration-years"
+              label="Years"
+              value={durationYears}
+              display={`${durationYears} yrs`}
+              min={1}
+              max={40}
+              step={1}
+              onChange={setDurationYears}
             />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-              Monthly Recurring Deposit (₹)
-            </label>
-            <Input
-              type="number"
-              step="1000"
-              value={monthlyContribution}
-              onChange={(e) => setMonthlyContribution(Math.max(0, parseFloat(e.target.value) || 0))}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <div className="flex justify-between text-xs">
-              <label className="font-semibold text-slate-700 dark:text-slate-300">
-                Assumed Annual Return
-              </label>
-              <span className="font-bold text-indigo-600">{annualReturnRate}%</span>
-            </div>
-            <input
-              type="range"
-              min="4"
-              max="18"
-              step="0.5"
-              value={annualReturnRate}
-              onChange={(e) => setAnnualReturnRate(parseFloat(e.target.value))}
-              className="w-full accent-indigo-600 cursor-pointer"
-            />
-            <div className="flex justify-between text-[10px] text-slate-400">
-              <span>Conservative (7%)</span>
-              <span>Moderate (12%)</span>
-              <span>Aggressive (15%)</span>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-              Time Horizon
-            </label>
-            <div className="grid grid-cols-4 gap-1.5">
-              {[5, 10, 15, 20].map((yr) => (
-                <button
-                  key={yr}
-                  type="button"
-                  onClick={() => setDurationYears(yr)}
-                  className={`py-1.5 text-xs font-semibold rounded-lg border transition-all ${
-                    durationYears === yr
-                      ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-300'
-                      : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600'
-                  }`}
-                >
-                  {yr} Yrs
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-1.5 pt-2">
-            <div className="flex justify-between text-xs">
-              <label className="font-semibold text-slate-700 dark:text-slate-300">
-                Inflation Adjustment
-              </label>
-              <span className="font-bold text-slate-600 dark:text-slate-400">{inflationRate}%</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="10"
-              step="0.5"
+            <RangeField
+              id="inflation-rate"
+              label="Inflation"
               value={inflationRate}
-              onChange={(e) => setInflationRate(parseFloat(e.target.value))}
-              className="w-full accent-slate-600 cursor-pointer"
+              display={`${inflationRate}%`}
+              min={0}
+              max={10}
+              step={0.5}
+              onChange={setInflationRate}
+              hint="Converts future values into today's purchasing power."
             />
-            <p className="text-[10px] text-slate-400">
-              Adjusts future corpus to approximate today&apos;s purchasing power.
-            </p>
-          </div>
+          </CardContent>
+          <CardFooter className="flex-col items-start gap-0.5">
+            <span className="text-xs text-muted-foreground">Total invested</span>
+            <span className="tabular text-sm font-medium text-foreground">{money(totalInvested)}</span>
+          </CardFooter>
         </Card>
 
-        {/* Right: Growth Chart & Final Metrics */}
-        <div className="lg:col-span-2 space-y-4">
-          {/* Top 3 Result Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Card className="p-4">
-              <span className="text-[11px] font-medium text-slate-500">Total Invested</span>
-              <div className="text-xl font-bold text-slate-900 dark:text-white mt-1">
-                {formatCurrency(finalYear.totalInvested)}
-              </div>
-              <div className="text-[10px] text-slate-400 mt-0.5">Your actual deposits</div>
-            </Card>
-
-            <Card className="p-4 border-l-4 border-l-emerald-500">
-              <span className="text-[11px] font-medium text-slate-500">Hypothetical Growth</span>
-              <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
-                +{formatCurrency(finalYear.hypotheticalGrowth)}
-              </div>
-              <div className="text-[10px] text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">
-                From compounding returns
-              </div>
-            </Card>
-
-            <Card className="p-4 bg-gradient-to-br from-indigo-50/60 to-violet-50/40 dark:from-indigo-950/40 dark:to-slate-900 border-indigo-200 dark:border-indigo-900">
-              <span className="text-[11px] font-bold text-indigo-700 dark:text-indigo-300">
-                Future Projected Value
-              </span>
-              <div className="text-2xl font-black text-indigo-600 dark:text-indigo-400 mt-1">
-                {formatCurrency(finalYear.futureValue)}
-              </div>
-              {inflationRate > 0 && (
-                <div className="text-[10px] text-indigo-800 dark:text-indigo-300 mt-0.5">
-                  ≈ {formatCurrency(finalYear.inflationAdjustedValue || 0)} in today&apos;s value
-                </div>
-              )}
-            </Card>
+        {/* Results */}
+        <div className="min-w-0 space-y-4">
+          <div className="grid gap-4 sm:grid-cols-3">
+            {SCENARIOS.map((sc) => {
+              const last = results[sc.key][results[sc.key].length - 1];
+              const value = last?.futureValue ?? startingAmount;
+              const real = last?.inflationAdjustedValue ?? value;
+              const multiple = totalInvested > 0 ? value / totalInvested : 1;
+              return (
+                <Stat
+                  key={sc.key}
+                  className="animate-rise"
+                  label={`${sc.label} · ${sc.rate}%`}
+                  icon={
+                    <span
+                      aria-hidden
+                      className="inline-block size-2 rounded-full"
+                      style={{ background: sc.color }}
+                    />
+                  }
+                  value={money(value)}
+                  hint={
+                    <span className="tabular">
+                      {multiple.toFixed(1)}× invested
+                      {showReal && <> · {money(real)} today</>}
+                    </span>
+                  }
+                >
+                  <p className="text-xs text-subtle">{sc.description}</p>
+                </Stat>
+              );
+            })}
           </div>
 
-          {/* Interactive Compound Growth Area Chart */}
-          <Card className="p-5">
-            <div className="flex items-center justify-between pb-3">
-              <CardTitle className="text-base">Compound Trajectory Over Time</CardTitle>
-              <span className="text-xs text-slate-400">{durationYears} Year Horizon</span>
-            </div>
-            <div className="h-72 w-full pt-2">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart
-                  data={simulationResults}
-                  margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-                >
-                  <defs>
-                    <linearGradient id="growthGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
-                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
-                    </linearGradient>
-                    <linearGradient id="investedGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#94a3b8" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#94a3b8" stopOpacity={0.0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis
-                    dataKey="year"
-                    stroke="#94a3b8"
-                    fontSize={11}
-                    tickFormatter={(yr) => `Yr ${yr}`}
-                  />
-                  <YAxis
-                    stroke="#94a3b8"
-                    fontSize={11}
-                    tickFormatter={(val) => `₹${(val / 100000).toFixed(0)}L`}
-                  />
-                  <Tooltip
-                    formatter={(val: any) => [formatCurrency(Number(val || 0)), '']}
-                    contentStyle={{
-                      backgroundColor: '#0f172a',
-                      border: 'none',
-                      borderRadius: '8px',
-                      color: '#fff',
-                      fontSize: '12px',
-                    }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-                  <Area
-                    type="monotone"
-                    dataKey="futureValue"
-                    name="Future Projected Value"
-                    stroke="#6366f1"
-                    strokeWidth={2}
-                    fillOpacity={1}
-                    fill="url(#growthGradient)"
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="totalInvested"
-                    name="Total Contributed"
-                    stroke="#94a3b8"
-                    strokeWidth={1.5}
-                    fillOpacity={1}
-                    fill="url(#investedGradient)"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+          <Card className="animate-rise" style={{ animationDelay: '60ms' }}>
+            <CardHeader className="flex-row flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1">
+                <CardTitle>Projected growth</CardTitle>
+                <CardDescription className="tabular">Over {durationYears} years, compounded monthly</CardDescription>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+                {[...SCENARIOS].reverse().map((sc) => (
+                  <span key={sc.key} className="inline-flex items-center gap-1.5">
+                    <span className="h-0.5 w-3 rounded-full" style={{ background: sc.color }} />
+                    {sc.label}
+                  </span>
+                ))}
+                {showReal && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="w-3 border-t-2 border-dashed" style={{ borderColor: 'var(--chart-2)' }} />
+                    Today&apos;s money
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="size-2.5 rounded-sm" style={{ background: 'var(--chart-5)' }} />
+                  Invested
+                </span>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="h-72 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+                    <XAxis
+                      dataKey="year"
+                      tick={axisTick}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(y: number) => `${y}y`}
+                      minTickGap={16}
+                    />
+                    <YAxis
+                      tick={axisTick}
+                      axisLine={false}
+                      tickLine={false}
+                      width={64}
+                      tickFormatter={(v: number) => compact.format(v)}
+                    />
+                    <Tooltip
+                      contentStyle={tooltipStyle}
+                      labelStyle={{ color: 'var(--muted-foreground)', marginBottom: 4 }}
+                      itemStyle={{ color: 'var(--foreground)', padding: 0 }}
+                      cursor={{ stroke: 'var(--border)' }}
+                      labelFormatter={(label) => `Year ${String(label)}`}
+                      formatter={(value, name) => [money(Number(value ?? 0)), seriesName[String(name)] ?? String(name)]}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="invested"
+                      stroke="var(--chart-4)"
+                      strokeWidth={1}
+                      fill="var(--chart-5)"
+                      fillOpacity={0.6}
+                      isAnimationActive={false}
+                    />
+                    {SCENARIOS.map((sc) => (
+                      <Line
+                        key={sc.key}
+                        type="monotone"
+                        dataKey={sc.key}
+                        stroke={sc.color}
+                        strokeWidth={sc.key === 'aggressive' ? 2 : 1.5}
+                        dot={false}
+                        activeDot={{ r: 3, strokeWidth: 0, fill: sc.color }}
+                        isAnimationActive={false}
+                      />
+                    ))}
+                    {showReal && (
+                      <Line
+                        type="monotone"
+                        dataKey="moderateReal"
+                        stroke="var(--chart-2)"
+                        strokeWidth={1.5}
+                        strokeDasharray="4 4"
+                        dot={false}
+                        activeDot={{ r: 3, strokeWidth: 0, fill: 'var(--chart-2)' }}
+                        isAnimationActive={false}
+                      />
+                    )}
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
           </Card>
 
-          {/* Multi-Scenario Comparative Table */}
-          <Card className="p-5 space-y-3">
-            <CardTitle className="text-sm">Comparative Return Scenarios ({durationYears} Year Horizon)</CardTitle>
-            <div className="border border-slate-100 dark:border-slate-800 rounded-xl overflow-hidden">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 border-b border-slate-100 dark:border-slate-800">
-                  <tr>
-                    <th className="p-3">Scenario</th>
-                    <th className="p-3 text-right">Assumed Rate</th>
-                    <th className="p-3 text-right">Total Contributed</th>
-                    <th className="p-3 text-right">Projected Corpus</th>
-                    <th className="p-3 text-right">Growth Multiplier</th>
+          <Card className="animate-rise" style={{ animationDelay: '120ms' }}>
+            <CardHeader>
+              <CardTitle>Year by year</CardTitle>
+              <CardDescription>Projected value every five years.</CardDescription>
+            </CardHeader>
+            <div className="overflow-x-auto border-t border-border">
+              <table className="w-full min-w-[480px] text-sm">
+                <thead>
+                  <tr className="border-b border-border text-xs text-muted-foreground">
+                    <th className="h-10 px-5 text-left font-medium">Year</th>
+                    <th className="h-10 px-3 text-right font-medium">Invested</th>
+                    {SCENARIOS.map((sc) => (
+                      <th key={sc.key} className="h-10 px-3 text-right font-medium last:pr-5">
+                        {sc.label}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {[
-                    { label: 'Conservative (Debt / Fixed Income)', rate: 8, badge: 'Low Risk' },
-                    { label: 'Moderate (Broad Equity / Index)', rate: 12, badge: 'Target Baseline' },
-                    { label: 'Aggressive (Growth / Dynamic Equity)', rate: 15, badge: 'High Volatility' },
-                  ].map((sc) => {
-                    const sim = simulateWealthGrowth({
-                      startingAmount,
-                      monthlyContribution,
-                      annualReturnRate: sc.rate,
-                      durationYears,
-                      inflationRate,
-                    });
-                    const res = sim[sim.length - 1];
-                    const mult = res.totalInvested > 0 ? (res.futureValue / res.totalInvested).toFixed(1) : '1.0';
-
-                    return (
-                      <tr key={sc.label} className={sc.rate === annualReturnRate ? 'bg-indigo-50/50 dark:bg-indigo-950/30' : ''}>
-                        <td className="p-3 font-medium text-slate-900 dark:text-white">
-                          <div className="flex items-center gap-1.5">
-                            <span>{sc.label}</span>
-                            {sc.rate === annualReturnRate && (
-                              <span className="text-[10px] text-indigo-600 bg-indigo-100 dark:bg-indigo-900 px-1.5 py-0.2 rounded-sm font-semibold">
-                                Active
-                              </span>
-                            )}
-                          </div>
+                <tbody className="divide-y divide-border">
+                  {tableRows.map((row) => (
+                    <tr key={row.year} className="h-12 transition-colors hover:bg-accent/50">
+                      <td className="tabular px-5 text-foreground">{row.year}</td>
+                      <td className="tabular px-3 text-right text-muted-foreground">{money(row.invested)}</td>
+                      {SCENARIOS.map((sc) => (
+                        <td
+                          key={sc.key}
+                          className={`tabular px-3 text-right last:pr-5 ${
+                            sc.key === 'aggressive' ? 'font-medium text-foreground' : 'text-foreground'
+                          }`}
+                        >
+                          {money(row[sc.key])}
                         </td>
-                        <td className="p-3 text-right font-bold text-slate-700 dark:text-slate-300">{sc.rate}%</td>
-                        <td className="p-3 text-right text-slate-500">{formatCurrency(res.totalInvested)}</td>
-                        <td className="p-3 text-right font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(res.futureValue)}</td>
-                        <td className="p-3 text-right font-bold text-indigo-600 dark:text-indigo-400">{mult}x</td>
-                      </tr>
-                    );
-                  })}
+                      ))}
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -324,26 +420,17 @@ export default function WealthSimulatorPage() {
         </div>
       </div>
 
-      {/* Mandatory Statutory & Ethical Disclosures */}
-      <Card className="p-4 bg-slate-50 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800">
-        <div className="flex items-start gap-3">
-          <ShieldAlert className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-          <div className="space-y-1 text-xs text-slate-500 leading-relaxed">
-            <h4 className="font-bold text-slate-800 dark:text-slate-200">
-              Educational Simulator Disclosures
-            </h4>
-            <p>
-              • Returns illustrated are hypothetical mathematical projections based on assumed compound annual growth rates. Actual market returns fluctuate and can be lower, volatile, or negative.
-            </p>
-            <p>
-              • Realized investment growth is subject to taxes, fees, and purchasing-power inflation. Results are not guaranteed.
-            </p>
-            <p>
-              • This simulator is designed strictly for educational illustration and does not constitute personalized financial or investment advice. SpendWise AI does not sell, recommend, or broker securities.
-            </p>
-          </div>
-        </div>
-      </Card>
+      <div className="space-y-1.5 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground">
+        <p>
+          Returns shown are hypothetical projections at fixed annual rates, compounded monthly. Real markets
+          fluctuate, and returns can be lower, volatile or negative. Taxes, fees and inflation reduce real growth.
+          Nothing here is guaranteed.
+        </p>
+        <p>
+          This simulator is for education only and is not personalised financial or investment advice. SpendWise
+          does not sell, recommend or broker any investment.
+        </p>
+      </div>
     </div>
   );
 }

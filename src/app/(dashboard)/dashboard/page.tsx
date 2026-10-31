@@ -2,55 +2,122 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
-import {
-  TrendingUp,
-  TrendingDown,
-  Wallet,
-  PiggyBank,
-  PieChart as PieIcon,
-  Plus,
-  ArrowUpRight,
-  ArrowDownRight,
-  ShieldCheck,
-  Sparkles,
-  Info,
-  Calendar,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { ArrowDownLeft, ArrowUpRight, ChevronRight, Gauge, PiggyBank, Plus, ReceiptIndianRupee } from 'lucide-react';
+import { buttonVariants } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { PageHeader } from '@/components/ui/page-header';
+import { Segmented } from '@/components/ui/segmented';
+import { Stat } from '@/components/ui/stat';
+import { Progress } from '@/components/ui/progress';
+import { Skeleton } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/ui/empty-state';
 import { DataService } from '@/lib/data-service';
-import { Transaction, Budget } from '@/types/database';
+import { Transaction, Budget, PeriodType } from '@/types/database';
 import {
   calculateFinancialSummary,
   calculateCategoryBreakdown,
   calculateEssentialityBreakdown,
+  calculateBudgetSpent,
   getReportingPeriodRange,
   filterTransactionsByDateRange,
   toLocalDateString,
   type DashboardPeriod,
 } from '@/lib/calculations/finance';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { cn, formatCurrency } from '@/lib/utils';
 import { toast } from 'sonner';
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-} from 'recharts';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 
-const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#3b82f6', '#8b5cf6', '#14b8a6', '#64748b'];
-const ESSENTIALITY_COLORS = {
-  essential: '#3b82f6',
-  optimizable: '#f59e0b',
-  discretionary: '#a855f7',
+const PERIOD_OPTIONS: { value: DashboardPeriod; label: string }[] = [
+  { value: 'this_week', label: '7 days' },
+  { value: 'this_month', label: 'This month' },
+  { value: 'last_month', label: 'Last month' },
+  { value: 'last_3_months', label: '3 months' },
+  { value: 'this_year', label: 'YTD' },
+  { value: 'all_time', label: 'All time' },
+];
+
+const PERIOD_LABEL: Record<DashboardPeriod, string> = {
+  this_week: 'the last 7 days',
+  this_month: 'this month',
+  last_month: 'last month',
+  last_3_months: 'the last 3 months',
+  last_6_months: 'the last 6 months',
+  this_year: 'this year',
+  all_time: 'all time',
 };
+
+const BUDGET_PERIOD_LABEL: Record<PeriodType, string> = {
+  weekly: 'this week',
+  monthly: 'this month',
+  quarterly: 'this quarter',
+  yearly: 'this year',
+};
+
+const TOOLTIP_STYLE: React.CSSProperties = {
+  background: 'var(--popover)',
+  border: '1px solid var(--border)',
+  borderRadius: 10,
+  fontSize: 12,
+  color: 'var(--foreground)',
+  boxShadow: 'var(--shadow-pop)',
+};
+
+const AXIS_TICK = { fill: 'var(--muted-foreground)', fontSize: 11 };
+
+// ---- Date helpers (UTC on YYYY-MM-DD strings, so the time zone never shifts a day) ----
+
+function parseDay(dateStr: string): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+function dayString(date: Date): string {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function formatDay(dateStr: string, opts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' }): string {
+  return new Intl.DateTimeFormat('en-IN', { ...opts, timeZone: 'UTC' }).format(parseDay(dateStr));
+}
+
+function compactCurrency(value: number): string {
+  if (value === 0) return '0';
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+type Granularity = 'day' | 'week' | 'month';
+
+/** Bucket key for a date: the day itself, the Monday of its week, or the 1st of its month. */
+function bucketKey(dateStr: string, granularity: Granularity): string {
+  if (granularity === 'day') return dateStr;
+  const d = parseDay(dateStr);
+  if (granularity === 'month') return `${dateStr.slice(0, 7)}-01`;
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return dayString(d);
+}
+
+function nextBucket(key: string, granularity: Granularity): string {
+  const d = parseDay(key);
+  if (granularity === 'day') d.setUTCDate(d.getUTCDate() + 1);
+  else if (granularity === 'week') d.setUTCDate(d.getUTCDate() + 7);
+  else d.setUTCMonth(d.getUTCMonth() + 1);
+  return dayString(d);
+}
+
+function granularityFor(period: DashboardPeriod): Granularity {
+  if (period === 'this_week' || period === 'this_month' || period === 'last_month') return 'day';
+  if (period === 'last_3_months' || period === 'last_6_months') return 'week';
+  return 'month';
+}
+
+// ---- Page ----
 
 export default function DashboardOverviewPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -60,7 +127,6 @@ export default function DashboardOverviewPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setCurrentDateStr(toLocalDateString());
     async function loadData() {
       try {
         await DataService.seedDemoDataIfEmpty();
@@ -72,454 +138,477 @@ export default function DashboardOverviewPage() {
         console.error('Error loading dashboard data:', err);
         toast.error(err instanceof Error ? err.message : 'Could not load dashboard data');
       } finally {
+        setCurrentDateStr(toLocalDateString());
         setLoading(false);
       }
     }
     loadData();
   }, []);
 
-  const overallBudget = budgets.find((b) => b.category_id === null)?.amount || 50000;
+  // Overall budget = the budget with no category. No fallback amount: without one we say so.
+  const overallBudget = useMemo(() => budgets.find((b) => b.category_id === null) ?? null, [budgets]);
 
-  // Filter transactions based on selected reporting period
+  const periodRange = useMemo(
+    () => (currentDateStr ? getReportingPeriodRange(selectedPeriod, currentDateStr) : null),
+    [selectedPeriod, currentDateStr]
+  );
+
   const periodTransactions = useMemo(() => {
     if (!currentDateStr) return transactions;
-    return filterTransactionsByDateRange(
-      transactions,
-      getReportingPeriodRange(selectedPeriod, currentDateStr)
-    );
-  }, [transactions, selectedPeriod, currentDateStr]);
+    return filterTransactionsByDateRange(transactions, periodRange);
+  }, [transactions, periodRange, currentDateStr]);
 
-  const summary = useMemo(() => {
-    return calculateFinancialSummary(periodTransactions, overallBudget);
-  }, [periodTransactions, overallBudget]);
+  const summary = useMemo(() => calculateFinancialSummary(periodTransactions), [periodTransactions]);
 
-  const categoryBreakdown = useMemo(() => {
-    return calculateCategoryBreakdown(periodTransactions, 'expense');
-  }, [periodTransactions]);
+  const categoryBreakdown = useMemo(
+    () => calculateCategoryBreakdown(periodTransactions, 'expense'),
+    [periodTransactions]
+  );
 
-  const essentialityBreakdown = useMemo(() => {
-    return calculateEssentialityBreakdown(periodTransactions);
-  }, [periodTransactions]);
+  const essentiality = useMemo(() => calculateEssentialityBreakdown(periodTransactions), [periodTransactions]);
 
-  const recentTransactions = useMemo(() => {
-    return periodTransactions.slice(0, 5);
-  }, [periodTransactions]);
+  // Budget use is measured over the budget's own period (e.g. this month), not the selected view.
+  const budgetUsage = useMemo(() => {
+    if (!overallBudget || !currentDateStr) return null;
+    const amount = Number(overallBudget.amount);
+    if (!(amount > 0)) return null;
+    const spent = calculateBudgetSpent(transactions, overallBudget, currentDateStr);
+    return {
+      amount,
+      spent,
+      pct: (spent / amount) * 100,
+      periodLabel: BUDGET_PERIOD_LABEL[overallBudget.period_type] ?? 'this period',
+    };
+  }, [overallBudget, transactions, currentDateStr]);
 
-  // Spending trend data for chart
-  const trendData = useMemo(() => {
-    const map = new Map<string, { date: string; income: number; expenses: number }>();
-    const sorted = [...periodTransactions].sort((a, b) => a.purchase_date.localeCompare(b.purchase_date));
+  const recentTransactions = useMemo(
+    () =>
+      [...periodTransactions]
+        .sort(
+          (a, b) =>
+            b.purchase_date.localeCompare(a.purchase_date) || (b.occurred_at ?? '').localeCompare(a.occurred_at ?? '')
+        )
+        .slice(0, 6),
+    [periodTransactions]
+  );
 
-    for (const t of sorted) {
-      const key = t.purchase_date;
-      if (!map.has(key)) {
-        map.set(key, { date: formatDate(key, 'dd MMM'), income: 0, expenses: 0 });
-      }
-      const entry = map.get(key)!;
-      if (t.transaction_type === 'income') entry.income += Number(t.amount);
-      if (t.transaction_type === 'expense') entry.expenses += Number(t.amount);
+  const granularity = granularityFor(selectedPeriod);
+
+  const cashFlow = useMemo(() => {
+    if (periodTransactions.length === 0) return [];
+    const dates = periodTransactions.map((t) => t.purchase_date).sort();
+    const lastTx = dates[dates.length - 1];
+    let start = periodRange?.startDate ?? dates[0];
+    let end = periodRange?.endDate ?? lastTx;
+    // Don't draw empty future days for periods that run past today.
+    if (currentDateStr) {
+      const cap = lastTx > currentDateStr ? lastTx : currentDateStr;
+      if (end > cap) end = cap;
     }
-    return Array.from(map.values()).slice(-7);
-  }, [transactions]);
+    if (start > end) start = end;
 
-  const pieData = useMemo(() => {
-    return categoryBreakdown.slice(0, 5).map((c) => ({
-      name: c.categoryName,
-      value: c.amount,
+    const buckets = new Map<string, { key: string; income: number; expenses: number }>();
+    const last = bucketKey(end, granularity);
+    for (let key = bucketKey(start, granularity); key <= last; key = nextBucket(key, granularity)) {
+      buckets.set(key, { key, income: 0, expenses: 0 });
+      if (buckets.size > 400) break;
+    }
+    for (const t of periodTransactions) {
+      const entry = buckets.get(bucketKey(t.purchase_date, granularity));
+      if (!entry) continue;
+      if (t.transaction_type === 'income') entry.income += Number(t.amount);
+      else if (t.transaction_type === 'expense') entry.expenses += Number(t.amount);
+    }
+
+    const spansYears = start.slice(0, 4) !== end.slice(0, 4);
+    return Array.from(buckets.values()).map((b) => ({
+      ...b,
+      label:
+        granularity === 'month'
+          ? formatDay(b.key, spansYears ? { month: 'short', year: '2-digit' } : { month: 'short' })
+          : formatDay(b.key),
     }));
-  }, [categoryBreakdown]);
+  }, [periodTransactions, periodRange, currentDateStr, granularity]);
 
-  const essentialityPieData = useMemo(() => {
-    return [
-      { name: 'Essential', value: essentialityBreakdown.essential, color: ESSENTIALITY_COLORS.essential },
-      { name: 'Optimizable', value: essentialityBreakdown.optimizable, color: ESSENTIALITY_COLORS.optimizable },
-      { name: 'Discretionary', value: essentialityBreakdown.discretionary, color: ESSENTIALITY_COLORS.discretionary },
-    ].filter((item) => item.value > 0);
-  }, [essentialityBreakdown]);
-
-  if (loading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="flex flex-col items-center gap-2">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
-          <p className="text-xs text-slate-500">Loading your financial records...</p>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <DashboardSkeleton />;
 
   if (transactions.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-8 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-white/50 dark:bg-slate-900/40">
-        <div className="h-16 w-16 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 flex items-center justify-center mb-4">
-          <Sparkles className="h-8 w-8" />
-        </div>
-        <h2 className="text-xl font-bold text-slate-900 dark:text-white">
-          Welcome to SpendWise AI!
-        </h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400 max-w-md mt-1 mb-6">
-          You don&apos;t have any transactions recorded yet. Start by capturing your first expense using natural language, voice input, or manual entry.
-        </p>
-        <Link href="/add-expense">
-          <Button variant="ai" className="gap-2">
-            <Plus className="h-4 w-4" />
-            Add Your First Expense
-          </Button>
-        </Link>
+      <div className="space-y-6">
+        <PageHeader title="Overview" description="Income, spending and budget at a glance." />
+        <EmptyState
+          className="py-20"
+          icon={<ReceiptIndianRupee />}
+          title="No transactions yet"
+          description="Add your first expense by typing, speaking or filling in a form. Your overview fills in from there."
+          action={
+            <Link href="/add-expense" className={buttonVariants()}>
+                <Plus />
+                New expense
+              </Link>
+          }
+        />
       </div>
     );
   }
 
+  const savingsRate = summary.totalIncome > 0 ? (summary.actualSavings / summary.totalIncome) * 100 : null;
+  const expenseCount = periodTransactions.filter((t) => t.transaction_type === 'expense').length;
+  const incomeCount = periodTransactions.length - expenseCount;
+  const periodLabel = PERIOD_LABEL[selectedPeriod];
+
   return (
     <div className="space-y-6">
-      {/* Period Selection Controls */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Financial Dashboard</h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Real-time cash flow, category distribution, and essentiality audit
-          </p>
-        </div>
+      <PageHeader
+        title="Overview"
+        description="Income, spending and budget at a glance."
+        actions={
+          <div className="-mx-1 max-w-full overflow-x-auto px-1 py-0.5 [&_button]:whitespace-nowrap">
+            <Segmented value={selectedPeriod} onChange={setSelectedPeriod} options={PERIOD_OPTIONS} size="sm" />
+          </div>
+        }
+      />
 
-        <div className="flex bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
-          {([
-            { id: 'this_week', label: '7 Days' },
-            { id: 'this_month', label: 'This Month' },
-            { id: 'last_month', label: 'Last Month' },
-            { id: 'last_3_months', label: '3 Months' },
-            { id: 'this_year', label: 'YTD' },
-            { id: 'all_time', label: 'All Time' },
-          ] satisfies { id: DashboardPeriod; label: string }[]).map((p) => (
-            <button
-              key={p.id}
-              onClick={() => setSelectedPeriod(p.id)}
-              className={`px-2.5 py-1 rounded-lg font-medium transition-all ${
-                selectedPeriod === p.id
-                  ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-xs font-semibold'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-              }`}
-            >
-              {p.label}
-            </button>
+      {/* KPI tiles */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 animate-rise">
+        <Stat
+          label="Income"
+          icon={<ArrowDownLeft />}
+          value={formatCurrency(summary.totalIncome)}
+          hint={`${incomeCount} ${incomeCount === 1 ? 'credit' : 'credits'} in ${periodLabel}`}
+        />
+        <Stat
+          label="Spent"
+          icon={<ArrowUpRight />}
+          value={formatCurrency(summary.totalExpenses)}
+          hint={`${expenseCount} ${expenseCount === 1 ? 'expense' : 'expenses'} in ${periodLabel}`}
+        />
+        <Stat
+          label="Net savings"
+          icon={<PiggyBank />}
+          value={formatCurrency(summary.actualSavings)}
+          hint={
+            savingsRate === null
+              ? 'No income recorded'
+              : summary.actualSavings < 0
+                ? 'Spent more than you earned'
+                : `${savingsRate.toFixed(0)}% of income kept`
+          }
+        />
+        {budgetUsage ? (
+          <Stat
+            label="Budget used"
+            icon={<Gauge />}
+            value={
+              <span className={cn(budgetUsage.pct >= 100 && 'text-destructive')}>{budgetUsage.pct.toFixed(0)}%</span>
+            }
+            hint={
+              <span className="tabular">
+                {formatCurrency(budgetUsage.spent)} of {formatCurrency(budgetUsage.amount)} {budgetUsage.periodLabel}
+              </span>
+            }
+          >
+            <Progress value={budgetUsage.pct} tone={budgetUsage.pct >= 100 ? 'danger' : 'default'} />
+          </Stat>
+        ) : (
+          <Stat
+            label="Budget used"
+            icon={<Gauge />}
+            value={<span className="text-muted-foreground">No budget</span>}
+            hint="Set an overall budget to track how much you have left."
+          >
+            <Link href="/budgets" className={buttonVariants({ variant: 'outline', size: 'sm', className: 'self-start' })}>
+                Set budget
+                <ChevronRight />
+              </Link>
+          </Stat>
+        )}
+      </div>
+
+      {/* Charts */}
+      <div className="grid gap-4 lg:grid-cols-3 animate-rise" style={{ animationDelay: '60ms' }}>
+        <Card className="lg:col-span-2">
+          <CardHeader className="flex-row items-start justify-between gap-4">
+            <div className="space-y-1">
+              <CardTitle>Cash flow</CardTitle>
+              <CardDescription>
+                Income and expenses per {granularity} for {periodLabel}
+              </CardDescription>
+            </div>
+            <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+              <LegendDot color="var(--chart-3)" label="Income" />
+              <LegendDot color="var(--chart-1)" label="Expenses" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            {cashFlow.length === 0 ? (
+              <ChartEmpty label={`No activity in ${periodLabel}`} />
+            ) : (
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={cashFlow} margin={{ top: 4, right: 0, left: 0, bottom: 0 }} barGap={2}>
+                    <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+                    <XAxis
+                      dataKey="label"
+                      tick={AXIS_TICK}
+                      axisLine={false}
+                      tickLine={false}
+                      minTickGap={12}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis
+                      tick={AXIS_TICK}
+                      axisLine={false}
+                      tickLine={false}
+                      width={52}
+                      tickFormatter={(v) => compactCurrency(Number(v))}
+                    />
+                    <Tooltip
+                      cursor={{ fill: 'var(--accent)' }}
+                      contentStyle={TOOLTIP_STYLE}
+                      labelStyle={{ color: 'var(--muted-foreground)', marginBottom: 4 }}
+                      itemStyle={{ color: 'var(--foreground)', padding: 0 }}
+                      formatter={(value, name) => [formatCurrency(Number(value ?? 0)), name]}
+                    />
+                    <Bar dataKey="income" name="Income" fill="var(--chart-3)" radius={[4, 4, 0, 0]} maxBarSize={28} />
+                    <Bar
+                      dataKey="expenses"
+                      name="Expenses"
+                      fill="var(--chart-1)"
+                      radius={[4, 4, 0, 0]}
+                      maxBarSize={28}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Spending mix</CardTitle>
+            <CardDescription>By essentiality</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div>
+              <div className="tabular text-2xl font-semibold tracking-[-0.02em]">
+                {formatCurrency(summary.totalExpenses)}
+              </div>
+              <div className="text-xs text-muted-foreground">Total spent in {periodLabel}</div>
+            </div>
+            <EssentialityBar
+              segments={[
+                { label: 'Essential', pct: essentiality.essentialPct, color: 'var(--chart-1)' },
+                { label: 'Optimizable', pct: essentiality.optimizablePct, color: 'var(--chart-2)' },
+                { label: 'Discretionary', pct: essentiality.discretionaryPct, color: 'var(--chart-4)' },
+              ]}
+            />
+            <ul className="divide-y divide-border">
+              {[
+                {
+                  label: 'Essential',
+                  amount: essentiality.essential,
+                  pct: essentiality.essentialPct,
+                  color: 'var(--chart-1)',
+                },
+                {
+                  label: 'Optimizable',
+                  amount: essentiality.optimizable,
+                  pct: essentiality.optimizablePct,
+                  color: 'var(--chart-2)',
+                },
+                {
+                  label: 'Discretionary',
+                  amount: essentiality.discretionary,
+                  pct: essentiality.discretionaryPct,
+                  color: 'var(--chart-4)',
+                },
+              ].map((row) => (
+                <li key={row.label} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                  <LegendDot color={row.color} label={row.label} className="text-sm text-foreground" />
+                  <span className="flex items-baseline gap-2">
+                    <span className="tabular font-medium">{formatCurrency(row.amount)}</span>
+                    <span className="tabular w-9 text-right text-xs text-muted-foreground">
+                      {row.pct.toFixed(0)}%
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Lists */}
+      <div className="grid gap-4 lg:grid-cols-3 animate-rise" style={{ animationDelay: '120ms' }}>
+        <Card className="lg:col-span-2">
+          <CardHeader className="flex-row items-center justify-between gap-4">
+            <div className="space-y-1">
+              <CardTitle>Recent transactions</CardTitle>
+              <CardDescription>Latest activity in {periodLabel}</CardDescription>
+            </div>
+            <Link href="/transactions" className={buttonVariants({ variant: 'ghost', size: 'sm' })}>
+                View all
+                <ChevronRight />
+              </Link>
+          </CardHeader>
+          {recentTransactions.length === 0 ? (
+            <CardContent>
+              <ChartEmpty label={`No transactions in ${periodLabel}`} className="h-32" />
+            </CardContent>
+          ) : (
+            <ul className="divide-y divide-border border-t border-border">
+              {recentTransactions.map((tx) => {
+                const isIncome = tx.transaction_type === 'income';
+                const meta = [tx.category?.name || 'Uncategorized', tx.merchant].filter(Boolean).join(' · ');
+                return (
+                  <li
+                    key={tx.id}
+                    className="flex items-center justify-between gap-4 px-5 py-3 transition-colors hover:bg-accent/50"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-foreground">{tx.description}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {meta}
+                        <span className="text-subtle"> · </span>
+                        <span className="tabular">{formatDay(tx.purchase_date)}</span>
+                      </div>
+                    </div>
+                    <div
+                      className={cn(
+                        'tabular shrink-0 text-right text-sm font-medium',
+                        isIncome ? 'text-foreground' : 'text-muted-foreground'
+                      )}
+                    >
+                      {isIncome ? '+' : '-'}
+                      {formatCurrency(Number(tx.amount))}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Top categories</CardTitle>
+            <CardDescription>Where your money went</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {categoryBreakdown.length === 0 ? (
+              <ChartEmpty label="No spending yet" className="h-32" />
+            ) : (
+              <ul className="space-y-4">
+                {categoryBreakdown.slice(0, 5).map((cat) => (
+                  <li key={cat.categoryId} className="space-y-1.5">
+                    <div className="flex items-baseline justify-between gap-3 text-sm">
+                      <span className="truncate text-foreground">{cat.categoryName}</span>
+                      <span className="flex shrink-0 items-baseline gap-2">
+                        <span className="tabular font-medium">{formatCurrency(cat.amount)}</span>
+                        <span className="tabular w-9 text-right text-xs text-muted-foreground">
+                          {cat.percentage.toFixed(0)}%
+                        </span>
+                      </span>
+                    </div>
+                    <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full bg-foreground/80"
+                        style={{ width: `${Math.max(2, Math.min(100, cat.percentage))}%` }}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ---- Small pieces ----
+
+function LegendDot({ color, label, className }: { color: string; label: string; className?: string }) {
+  return (
+    <span className={cn('inline-flex items-center gap-1.5', className)}>
+      <span className="size-2 rounded-[3px]" style={{ background: color }} />
+      {label}
+    </span>
+  );
+}
+
+function EssentialityBar({ segments }: { segments: { label: string; pct: number; color: string }[] }) {
+  const visible = segments.filter((s) => s.pct > 0);
+  if (visible.length === 0) return <div className="h-2 w-full rounded-full bg-muted" />;
+  return (
+    <div className="flex h-2 w-full gap-0.5 overflow-hidden rounded-full" role="img" aria-label="Spending by essentiality">
+      {visible.map((s) => (
+        <div key={s.label} title={`${s.label} ${s.pct.toFixed(0)}%`} style={{ width: `${s.pct}%`, background: s.color }} />
+      ))}
+    </div>
+  );
+}
+
+function ChartEmpty({ label, className }: { label: string; className?: string }) {
+  return (
+    <div
+      className={cn(
+        'bg-grid flex h-64 items-center justify-center rounded-lg border border-dashed border-border text-[13px] text-muted-foreground',
+        className
+      )}
+    >
+      {label}
+    </div>
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-2">
+          <Skeleton className="h-7 w-32" />
+          <Skeleton className="h-4 w-56" />
+        </div>
+        <Skeleton className="h-8 w-80 max-w-full" />
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="space-y-3 rounded-xl border border-border bg-card p-4">
+            <Skeleton className="h-4 w-20" />
+            <Skeleton className="h-7 w-32" />
+            <Skeleton className="h-3 w-24" />
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="space-y-4 rounded-xl border border-border bg-card p-5 lg:col-span-2">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-64 w-full" />
+        </div>
+        <div className="space-y-4 rounded-xl border border-border bg-card p-5">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-7 w-32" />
+          <Skeleton className="h-2 w-full" />
+          <Skeleton className="h-28 w-full" />
+        </div>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="space-y-3 rounded-xl border border-border bg-card p-5 lg:col-span-2">
+          <Skeleton className="h-4 w-36" />
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-10 w-full" />
           ))}
         </div>
-      </div>
-
-      {/* Top 5 KPI Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        {/* Total Income */}
-        <Card className="p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-medium">Total Income</span>
-            <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600">
-              <ArrowUpRight className="h-4 w-4" />
-            </div>
-          </div>
-          <div className="mt-2">
-            <div className="text-xl font-bold text-slate-900 dark:text-white">
-              {formatCurrency(summary.totalIncome)}
-            </div>
-            <div className="text-[11px] text-slate-500 mt-0.5">Recorded period income</div>
-          </div>
-        </Card>
-
-        {/* Total Expenses */}
-        <Card className="p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-medium">Total Expenses</span>
-            <div className="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/50 text-rose-600">
-              <ArrowDownRight className="h-4 w-4" />
-            </div>
-          </div>
-          <div className="mt-2">
-            <div className="text-xl font-bold text-slate-900 dark:text-white">
-              {formatCurrency(summary.totalExpenses)}
-            </div>
-            <div className="text-[11px] text-slate-500 mt-0.5">Across all categories</div>
-          </div>
-        </Card>
-
-        {/* Remaining Balance */}
-        <Card className="p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-medium">Remaining Balance</span>
-            <div className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600">
-              <Wallet className="h-4 w-4" />
-            </div>
-          </div>
-          <div className="mt-2">
-            <div className="text-xl font-bold text-slate-900 dark:text-white">
-              {formatCurrency(summary.remainingBalance)}
-            </div>
-            <div className="text-[11px] text-slate-500 mt-0.5">Income minus expenses</div>
-          </div>
-        </Card>
-
-        {/* Actual Savings */}
-        <Card className="p-4 flex flex-col justify-between border-l-4 border-l-emerald-500">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-medium flex items-center gap-1">
-              Actual Savings
-              <span title="Calculated as recorded income minus recorded expenses for this period">
-                <Info className="h-3 w-3 text-slate-400 cursor-help" />
-              </span>
-            </span>
-            <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600">
-              <PiggyBank className="h-4 w-4" />
-            </div>
-          </div>
-          <div className="mt-2">
-            <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">
-              {formatCurrency(summary.actualSavings)}
-            </div>
-            <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">
-              Net retained cashflow
-            </div>
-          </div>
-        </Card>
-
-        {/* Monthly Budget Utilization */}
-        <Card className="p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-medium">Budget Utilization</span>
-            <div className="p-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600">
-              <PieIcon className="h-4 w-4" />
-            </div>
-          </div>
-          <div className="mt-2">
-            <div className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-              <span>{summary.budgetUtilization.toFixed(1)}%</span>
-            </div>
-            <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
-              <div
-                className={`h-full rounded-full ${
-                  summary.budgetUtilization > 90
-                    ? 'bg-rose-500'
-                    : summary.budgetUtilization > 75
-                    ? 'bg-amber-500'
-                    : 'bg-indigo-600'
-                }`}
-                style={{ width: `${Math.min(summary.budgetUtilization, 100)}%` }}
-              />
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* Main Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Income vs Expenses Bar Chart */}
-        <Card className="lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <div>
-              <CardTitle className="text-base">Cash Flow Trend</CardTitle>
-              <CardDescription className="text-xs">
-                Comparison of daily income credits vs expenses
-              </CardDescription>
-            </div>
-            <Badge variant="outline" className="text-xs">
-              Recent Activity
-            </Badge>
-          </CardHeader>
-          <CardContent className="h-72 pt-4">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} tickLine={false} />
-                <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
-                <Tooltip
-                  formatter={(value: any) => [formatCurrency(Number(value || 0)), '']}
-                  contentStyle={{
-                    backgroundColor: '#0f172a',
-                    border: 'none',
-                    borderRadius: '8px',
-                    color: '#fff',
-                    fontSize: '12px',
-                  }}
-                />
-                <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-                <Bar dataKey="income" name="Income" fill="#10b981" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="expenses" name="Expenses" fill="#6366f1" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* Essentiality Breakdown Donut */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Essentiality Audit</CardTitle>
-            <CardDescription className="text-xs">
-              Essential vs Optimizable vs Discretionary
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col items-center justify-center pt-2">
-            <div className="h-48 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={essentialityPieData}
-                    innerRadius={50}
-                    outerRadius={75}
-                    paddingAngle={4}
-                    dataKey="value"
-                  >
-                    {essentialityPieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value: any) => [formatCurrency(Number(value || 0)), '']} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="w-full space-y-1.5 pt-2 text-xs">
-              <div className="flex justify-between items-center">
-                <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
-                  <span className="h-2 w-2 rounded-full bg-blue-500" />
-                  Essential ({essentialityBreakdown.essentialPct.toFixed(0)}%)
-                </span>
-                <span className="font-semibold text-slate-800 dark:text-slate-200">
-                  {formatCurrency(essentialityBreakdown.essential)}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
-                  <span className="h-2 w-2 rounded-full bg-amber-500" />
-                  Optimizable ({essentialityBreakdown.optimizablePct.toFixed(0)}%)
-                </span>
-                <span className="font-semibold text-slate-800 dark:text-slate-200">
-                  {formatCurrency(essentialityBreakdown.optimizable)}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
-                  <span className="h-2 w-2 rounded-full bg-purple-500" />
-                  Discretionary ({essentialityBreakdown.discretionaryPct.toFixed(0)}%)
-                </span>
-                <span className="font-semibold text-slate-800 dark:text-slate-200">
-                  {formatCurrency(essentialityBreakdown.discretionary)}
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Bottom Grid: Recent Transactions and Top Categories */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Recent Transactions List */}
-        <Card className="lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between pb-3">
-            <div>
-              <CardTitle className="text-base">Recent Transactions</CardTitle>
-              <CardDescription className="text-xs">
-                Latest financial events recorded into your ledger
-              </CardDescription>
-            </div>
-            <Link href="/transactions">
-              <Button variant="ghost" size="sm" className="text-xs text-indigo-600 dark:text-indigo-400">
-                View All
-              </Button>
-            </Link>
-          </CardHeader>
-          <CardContent className="space-y-3 pt-0">
-            {recentTransactions.map((tx) => (
-              <div
-                key={tx.id}
-                className="flex items-center justify-between p-3 rounded-lg border border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-900/50 hover:bg-slate-100/50 dark:hover:bg-slate-800/50 transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <div
-                    className={`h-9 w-9 rounded-xl flex items-center justify-center shrink-0 ${
-                      tx.transaction_type === 'income'
-                        ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-600'
-                        : 'bg-indigo-100 dark:bg-indigo-950 text-indigo-600'
-                    }`}
-                  >
-                    {tx.transaction_type === 'income' ? (
-                      <ArrowUpRight className="h-4 w-4" />
-                    ) : (
-                      <ArrowDownRight className="h-4 w-4" />
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                      <span>{tx.description}</span>
-                      <Badge
-                        variant={tx.essentiality as any}
-                        className="text-[9px] px-1.5 py-0 h-4 font-normal"
-                      >
-                        {tx.essentiality}
-                      </Badge>
-                    </div>
-                    <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
-                      <span>{tx.category?.name || 'Uncategorized'}</span>
-                      <span>•</span>
-                      <span>{formatDate(tx.purchase_date)}</span>
-                      {tx.merchant && (
-                        <>
-                          <span>•</span>
-                          <span>{tx.merchant}</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div
-                    className={`text-sm font-bold ${
-                      tx.transaction_type === 'income'
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : 'text-slate-900 dark:text-white'
-                    }`}
-                  >
-                    {tx.transaction_type === 'income' ? '+' : '-'}
-                    {formatCurrency(Number(tx.amount))}
-                  </div>
-                  <div className="text-[10px] text-slate-400 uppercase">
-                    {tx.payment_method || 'Standard'}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
-        {/* Top Spending Categories */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Top Spending Categories</CardTitle>
-            <CardDescription className="text-xs">
-              Where your money is allocated this period
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 pt-0">
-            {categoryBreakdown.slice(0, 5).map((cat, idx) => (
-              <div key={cat.categoryId} className="space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <span
-                      className="h-2 w-2 rounded-full"
-                      style={{ backgroundColor: COLORS[idx % COLORS.length] }}
-                    />
-                    {cat.categoryName}
-                  </span>
-                  <span className="font-semibold text-slate-900 dark:text-white">
-                    {formatCurrency(cat.amount)} ({cat.percentage.toFixed(0)}%)
-                  </span>
-                </div>
-                <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{
-                      width: `${cat.percentage}%`,
-                      backgroundColor: COLORS[idx % COLORS.length],
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+        <div className="space-y-3 rounded-xl border border-border bg-card p-5">
+          <Skeleton className="h-4 w-28" />
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-8 w-full" />
+          ))}
+        </div>
       </div>
     </div>
   );

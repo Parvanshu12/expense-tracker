@@ -1,46 +1,134 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import {
   Search,
-  Filter,
   Plus,
   Trash2,
-  Edit,
-  ArrowUpRight,
-  ArrowDownRight,
+  Pencil,
   Sparkles,
-  Info,
-  Calendar,
-  Tag,
-  AlertTriangle,
+  ReceiptIndianRupee,
+  SearchX,
+  Utensils,
+  ShoppingCart,
+  Car,
+  House,
+  Zap,
+  HeartPulse,
+  ShoppingBag,
+  Film,
+  GraduationCap,
+  Plane,
+  Repeat,
+  Landmark,
+  Gift,
+  Ellipsis,
+  Briefcase,
+  Laptop,
+  Building2,
+  Coins,
+  ArrowUpRight,
+  type LucideIcon,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Select } from '@/components/ui/select';
+import { Field } from '@/components/ui/label';
+import { Dialog } from '@/components/ui/dialog';
+import { PageHeader } from '@/components/ui/page-header';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Skeleton } from '@/components/ui/skeleton';
 import { DataService, DEFAULT_SYSTEM_CATEGORIES } from '@/lib/data-service';
 import { Transaction, Category, Essentiality } from '@/types/database';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { toLocalDateString } from '@/lib/calculations/finance';
+import { formatCurrency } from '@/lib/utils';
 import { toast } from 'sonner';
+
+type TypeFilter = 'all' | 'expense' | 'income';
+type SortBy = 'date_desc' | 'date_asc' | 'amount_desc' | 'amount_asc';
+
+const ESSENTIALITY_LABELS: Record<Essentiality, string> = {
+  essential: 'Essential',
+  optimizable: 'Optimizable',
+  discretionary: 'Discretionary',
+};
+
+const CATEGORY_ICONS: Record<string, LucideIcon> = {
+  Utensils,
+  ShoppingCart,
+  Car,
+  Home: House,
+  House,
+  Zap,
+  HeartPulse,
+  ShoppingBag,
+  Film,
+  GraduationCap,
+  Plane,
+  Sparkles,
+  Repeat,
+  Landmark,
+  Gift,
+  MoreHorizontal: Ellipsis,
+  Ellipsis,
+  Briefcase,
+  Laptop,
+  Building2,
+  Coins,
+};
+
+const PAYMENT_METHODS = ['UPI', 'Credit Card', 'Debit Card', 'Net Banking', 'Cash'];
+
+/** Shifts a YYYY-MM-DD string by whole days (UTC arithmetic, no time zone drift). */
+function shiftDate(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d + days));
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDayHeading(dateStr: string, today: string): string {
+  if (today) {
+    if (dateStr === today) return 'Today';
+    if (dateStr === shiftDate(today, -1)) return 'Yesterday';
+  }
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const sameYear = today ? today.slice(0, 4) === dateStr.slice(0, 4) : false;
+  return new Intl.DateTimeFormat('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: sameYear ? undefined : 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
+function formatSigned(amount: number): string {
+  if (amount > 0) return `+${formatCurrency(amount)}`;
+  if (amount < 0) return `−${formatCurrency(-amount)}`;
+  return formatCurrency(0);
+}
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>(DEFAULT_SYSTEM_CATEGORIES);
   const [loading, setLoading] = useState(true);
+  const [today, setToday] = useState('');
 
-  // Filters & Search
+  // Filters & search
   const [searchQuery, setSearchQuery] = useState('');
-  const [typeFilter, setTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [essentialityFilter, setEssentialityFilter] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'amount_desc' | 'amount_asc'>('date_desc');
+  const [sortBy, setSortBy] = useState<SortBy>('date_desc');
 
-  // Deletion modal state
+  // Delete confirmation
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
-  // Edit modal state
+  // Edit dialog
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [editDesc, setEditDesc] = useState('');
   const [editAmount, setEditAmount] = useState('');
@@ -50,6 +138,10 @@ export default function TransactionsPage() {
   const [editMerchant, setEditMerchant] = useState('');
   const [editPaymentMethod, setEditPaymentMethod] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Stable callbacks: Dialog re-focuses its first control whenever onClose changes.
+  const closeEdit = useCallback(() => setEditingTransaction(null), []);
+  const closeDelete = useCallback(() => setDeletingId(null), []);
 
   const startEdit = (tx: Transaction) => {
     setEditingTransaction(tx);
@@ -87,9 +179,11 @@ export default function TransactionsPage() {
 
       if (updated) {
         setTransactions((prev) =>
-          prev.map((t) => (t.id === updated.id ? { ...updated, category: categories.find((c) => c.id === updated.category_id) } : t))
+          prev.map((t) =>
+            t.id === updated.id ? { ...updated, category: categories.find((c) => c.id === updated.category_id) } : t
+          )
         );
-        toast.success('Transaction updated successfully');
+        toast.success('Transaction updated');
         setEditingTransaction(null);
       }
     } catch (err) {
@@ -105,6 +199,7 @@ export default function TransactionsPage() {
         await DataService.seedDemoDataIfEmpty();
         const txs = await DataService.getTransactions();
         const cats = await DataService.getCategories();
+        setToday(toLocalDateString());
         setTransactions(txs);
         setCategories(cats);
       } catch (err) {
@@ -118,6 +213,7 @@ export default function TransactionsPage() {
   }, []);
 
   const handleDelete = async (id: string) => {
+    setDeleting(true);
     try {
       const ok = await DataService.deleteTransaction(id);
       if (ok) {
@@ -129,14 +225,16 @@ export default function TransactionsPage() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Deletion error');
     } finally {
+      setDeleting(false);
       setDeletingId(null);
     }
   };
 
+  const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+
   const filteredTransactions = useMemo(() => {
     return transactions
       .filter((tx) => {
-        // Search
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase();
           const matchesDesc = tx.description.toLowerCase().includes(q);
@@ -144,16 +242,9 @@ export default function TransactionsPage() {
           const matchesCategory = (tx.category?.name || '').toLowerCase().includes(q);
           if (!matchesDesc && !matchesMerchant && !matchesCategory) return false;
         }
-
-        // Type filter
         if (typeFilter !== 'all' && tx.transaction_type !== typeFilter) return false;
-
-        // Category filter
         if (categoryFilter !== 'all' && tx.category_id !== categoryFilter) return false;
-
-        // Essentiality filter
         if (essentialityFilter !== 'all' && tx.essentiality !== essentialityFilter) return false;
-
         return true;
       })
       .sort((a, b) => {
@@ -165,376 +256,402 @@ export default function TransactionsPage() {
       });
   }, [transactions, searchQuery, typeFilter, categoryFilter, essentialityFilter, sortBy]);
 
+  // Date sorts are grouped by day; amount sorts render as one flat list.
+  const groups = useMemo(() => {
+    if (sortBy !== 'date_desc' && sortBy !== 'date_asc') {
+      return [{ key: 'all', label: null as string | null, net: 0, items: filteredTransactions }];
+    }
+    const result: { key: string; label: string | null; net: number; items: Transaction[] }[] = [];
+    for (const tx of filteredTransactions) {
+      let group = result[result.length - 1];
+      if (!group || group.key !== tx.purchase_date) {
+        group = { key: tx.purchase_date, label: formatDayHeading(tx.purchase_date, today), net: 0, items: [] };
+        result.push(group);
+      }
+      group.items.push(tx);
+      group.net += tx.transaction_type === 'income' ? Number(tx.amount) : -Number(tx.amount);
+    }
+    return result;
+  }, [filteredTransactions, sortBy, today]);
+
+  const totalSpent = useMemo(
+    () =>
+      filteredTransactions
+        .filter((t) => t.transaction_type === 'expense')
+        .reduce((sum, t) => sum + Number(t.amount), 0),
+    [filteredTransactions]
+  );
+
+  const hasFilters =
+    searchQuery.trim() !== '' || typeFilter !== 'all' || categoryFilter !== 'all' || essentialityFilter !== 'all';
+
+  const clearFilters = () => {
+    setSearchQuery('');
+    setTypeFilter('all');
+    setCategoryFilter('all');
+    setEssentialityFilter('all');
+  };
+
+  const expenseCategories = categories.filter((c) => c.category_type === 'expense');
+  const incomeCategories = categories.filter((c) => c.category_type === 'income');
+  const deletingTx = deletingId ? transactions.find((t) => t.id === deletingId) : undefined;
+
+  const newExpenseLink = (
+    <Link href="/add-expense" className={buttonVariants()}>
+      <Plus />
+      New expense
+    </Link>
+  );
+
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
+      <div className="space-y-6">
+        <div className="flex items-end justify-between gap-4">
+          <div className="space-y-2">
+            <Skeleton className="h-7 w-40" />
+            <Skeleton className="h-4 w-56" />
+          </div>
+          <Skeleton className="h-9 w-32 rounded-lg" />
+        </div>
+        <div className="flex flex-col gap-2 lg:flex-row">
+          <Skeleton className="h-9 flex-1 rounded-lg" />
+          <Skeleton className="h-9 w-full rounded-lg lg:w-96" />
+        </div>
+        {[0, 1].map((g) => (
+          <div key={g} className="space-y-2">
+            <Skeleton className="h-4 w-24" />
+            <Card className="divide-y divide-border">
+              {[0, 1, 2].map((r) => (
+                <div key={r} className="flex items-center gap-3 px-4 py-3">
+                  <Skeleton className="size-8 rounded-lg" />
+                  <div className="flex-1 space-y-1.5">
+                    <Skeleton className="h-4 w-1/3" />
+                    <Skeleton className="h-3 w-1/4" />
+                  </div>
+                  <Skeleton className="h-4 w-16" />
+                </div>
+              ))}
+            </Card>
+          </div>
+        ))}
       </div>
     );
   }
 
+  const description =
+    transactions.length === 0
+      ? 'Every expense and income entry in one ledger.'
+      : `${hasFilters ? `${filteredTransactions.length} of ${transactions.length}` : transactions.length} transactions · ${formatCurrency(totalSpent)} spent`;
+
   return (
     <div className="space-y-6">
-      {/* Search, Filters, and New Action */}
-      <Card className="p-4 space-y-4">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-3">
-          <div className="relative w-full md:w-80">
-            <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-            <Input
-              type="text"
-              placeholder="Search description, merchant, or notes..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 h-10 text-xs"
-            />
-          </div>
+      <PageHeader
+        title="Transactions"
+        description={<span className="tabular">{description}</span>}
+        actions={newExpenseLink}
+      />
 
-          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-            {/* Type selector */}
-            <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value as any)}
-              className="h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs text-slate-700 dark:text-slate-300 focus:outline-none"
-            >
-              <option value="all">All Types</option>
-              <option value="expense">Expenses Only</option>
-              <option value="income">Income Only</option>
-            </select>
-
-            {/* Category filter */}
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs text-slate-700 dark:text-slate-300 focus:outline-none"
-            >
-              <option value="all">All Categories</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-
-            {/* Essentiality filter */}
-            <select
-              value={essentialityFilter}
-              onChange={(e) => setEssentialityFilter(e.target.value)}
-              className="h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs text-slate-700 dark:text-slate-300 focus:outline-none"
-            >
-              <option value="all">All Essentialities</option>
-              <option value="essential">Essential</option>
-              <option value="optimizable">Optimizable</option>
-              <option value="discretionary">Discretionary</option>
-            </select>
-
-            {/* Sort order */}
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
-              className="h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs text-slate-700 dark:text-slate-300 focus:outline-none"
-            >
-              <option value="date_desc">Latest Date</option>
-              <option value="date_asc">Oldest Date</option>
-              <option value="amount_desc">Highest Amount</option>
-              <option value="amount_asc">Lowest Amount</option>
-            </select>
-
-            <Link href="/add-expense">
-              <Button size="sm" variant="ai" className="h-10 gap-1.5 text-xs font-semibold">
-                <Plus className="h-4 w-4" />
-                Add Transaction
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </Card>
-
-      {/* Transactions List */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between pb-3">
-          <div>
-            <CardTitle className="text-base">Ledger Entries</CardTitle>
-            <CardDescription className="text-xs">
-              Showing {filteredTransactions.length} of {transactions.length} recorded items
-            </CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          {filteredTransactions.length === 0 ? (
-            <div className="py-12 text-center text-slate-500">
-              <p className="text-sm">No transactions match your current filters.</p>
+      {transactions.length === 0 ? (
+        <EmptyState
+          icon={<ReceiptIndianRupee />}
+          title="No transactions yet"
+          description="Log your first expense and it will show up here."
+          action={newExpenseLink}
+        />
+      ) : (
+        <>
+          {/* Toolbar */}
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-center animate-rise">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />
+              <Input
+                type="search"
+                placeholder="Search description, merchant or category"
+                aria-label="Search transactions"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9"
+              />
             </div>
-          ) : (
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {filteredTransactions.map((tx) => (
-                <div
-                  key={tx.id}
-                  className="flex items-center justify-between p-4 hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors"
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:flex">
+              <div className="lg:w-32">
+                <Select
+                  aria-label="Type"
+                  value={typeFilter}
+                  onChange={(e) => setTypeFilter(e.target.value as TypeFilter)}
                 >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${
-                        tx.transaction_type === 'income'
-                          ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-600'
-                          : 'bg-indigo-100 dark:bg-indigo-950 text-indigo-600'
-                      }`}
-                    >
-                      {tx.transaction_type === 'income' ? (
-                        <ArrowUpRight className="h-5 w-5" />
-                      ) : (
-                        <ArrowDownRight className="h-5 w-5" />
-                      )}
-                    </div>
-
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                        <span>{tx.description}</span>
-                        <Badge
-                          variant={tx.essentiality as any}
-                          className="text-[9px] px-1.5 py-0 h-4 font-normal"
-                        >
-                          {tx.essentiality}
-                        </Badge>
-                        {tx.entry_method !== 'manual' && (
-                          <span
-                            title={`Captured via ${tx.entry_method}`}
-                            className="inline-flex items-center text-[10px] text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-1.5 py-0.5 rounded-sm"
-                          >
-                            <Sparkles className="h-2.5 w-2.5 mr-0.5" />
-                            AI
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2 mt-0.5">
-                        <span className="font-medium text-slate-600 dark:text-slate-300">
-                          {tx.category?.name || 'Category'}
-                        </span>
-                        <span>•</span>
-                        <span>{formatDate(tx.purchase_date)}</span>
-                        {tx.merchant && (
-                          <>
-                            <span>•</span>
-                            <span>{tx.merchant}</span>
-                          </>
-                        )}
-                        {tx.payment_method && (
-                          <>
-                            <span>•</span>
-                            <span className="text-[11px] text-slate-400">{tx.payment_method}</span>
-                          </>
-                        )}
-                      </div>
-
-                      {tx.original_input && (
-                        <p className="text-[11px] text-slate-400 italic mt-1 truncate max-w-md">
-                          &ldquo;{tx.original_input}&rdquo;
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-4">
-                    <div className="text-right">
-                      <div
-                        className={`text-base font-bold ${
-                          tx.transaction_type === 'income'
-                            ? 'text-emerald-600 dark:text-emerald-400'
-                            : 'text-slate-900 dark:text-white'
-                        }`}
-                      >
-                        {tx.transaction_type === 'income' ? '+' : '-'}
-                        {formatCurrency(Number(tx.amount))}
-                      </div>
-                      <div className="text-[10px] text-slate-400">
-                        {tx.occurred_at ? new Date(tx.occurred_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => startEdit(tx)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
-                        title="Edit transaction"
-                      >
-                        <Edit className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => setDeletingId(tx.id)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
-                        title="Delete transaction"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Edit Transaction Modal */}
-      {editingTransaction && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <Card className="max-w-md w-full p-6 space-y-4 animate-in fade-in-50 zoom-in-95">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                Edit Transaction
-              </h3>
-              <button onClick={() => setEditingTransaction(null)} className="text-slate-400">
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveEdit} className="space-y-3.5">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Description
-                </label>
-                <Input
-                  type="text"
-                  value={editDesc}
-                  onChange={(e) => setEditDesc(e.target.value)}
-                  required
-                />
+                  <option value="all">All types</option>
+                  <option value="expense">Expenses</option>
+                  <option value="income">Income</option>
+                </Select>
               </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Amount (₹ INR)
-                  </label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={editAmount}
-                    onChange={(e) => setEditAmount(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Category
-                  </label>
-                  <select
-                    value={editCategory}
-                    onChange={(e) => setEditCategory(e.target.value)}
-                    className="w-full h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs text-slate-900 dark:text-slate-100 focus:outline-none"
-                  >
-                    {categories.map((c) => (
+              <div className="lg:w-40">
+                <Select
+                  aria-label="Category"
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                >
+                  <option value="all">All categories</option>
+                  <optgroup label="Expense">
+                    {expenseCategories.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
                       </option>
                     ))}
-                  </select>
-                </div>
+                  </optgroup>
+                  <optgroup label="Income">
+                    {incomeCategories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                </Select>
               </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Purchase Date
-                  </label>
-                  <Input
-                    type="date"
-                    value={editDate}
-                    onChange={(e) => setEditDate(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Essentiality
-                  </label>
-                  <select
-                    value={editEssentiality}
-                    onChange={(e) => setEditEssentiality(e.target.value as any)}
-                    className="w-full h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs text-slate-900 dark:text-slate-100 focus:outline-none"
-                  >
-                    <option value="essential">Essential</option>
-                    <option value="optimizable">Optimizable</option>
-                    <option value="discretionary">Discretionary</option>
-                  </select>
-                </div>
+              <div className="lg:w-36">
+                <Select
+                  aria-label="Essentiality"
+                  value={essentialityFilter}
+                  onChange={(e) => setEssentialityFilter(e.target.value)}
+                >
+                  <option value="all">Any need</option>
+                  <option value="essential">Essential</option>
+                  <option value="optimizable">Optimizable</option>
+                  <option value="discretionary">Discretionary</option>
+                </Select>
               </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Merchant (Optional)
-                  </label>
-                  <Input
-                    type="text"
-                    value={editMerchant}
-                    onChange={(e) => setEditMerchant(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Payment Method
-                  </label>
-                  <select
-                    value={editPaymentMethod}
-                    onChange={(e) => setEditPaymentMethod(e.target.value)}
-                    className="w-full h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs text-slate-900 dark:text-slate-100 focus:outline-none"
-                  >
-                    <option value="UPI">UPI</option>
-                    <option value="Credit Card">Credit Card</option>
-                    <option value="Debit Card">Debit Card</option>
-                    <option value="Net Banking">Net Banking</option>
-                    <option value="Cash">Cash</option>
-                  </select>
-                </div>
+              <div className="lg:w-36">
+                <Select aria-label="Sort" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)}>
+                  <option value="date_desc">Newest first</option>
+                  <option value="date_asc">Oldest first</option>
+                  <option value="amount_desc">Highest amount</option>
+                  <option value="amount_asc">Lowest amount</option>
+                </Select>
               </div>
+            </div>
+          </div>
 
-              <div className="flex justify-end gap-2 pt-3">
-                <Button variant="outline" size="sm" type="button" onClick={() => setEditingTransaction(null)}>
-                  Cancel
+          {filteredTransactions.length === 0 ? (
+            <EmptyState
+              icon={<SearchX />}
+              title="Nothing matches your filters"
+              description="Try a different search, or clear the filters to see every transaction."
+              action={
+                <Button variant="outline" size="sm" onClick={clearFilters}>
+                  Clear filters
                 </Button>
-                <Button size="sm" variant="ai" type="submit" disabled={savingEdit}>
-                  {savingEdit ? 'Saving...' : 'Save Changes'}
-                </Button>
-              </div>
-            </form>
-          </Card>
-        </div>
+              }
+            />
+          ) : (
+            <div className="space-y-6 animate-rise" style={{ animationDelay: '60ms' }}>
+              {groups.map((group) => (
+                <section key={group.key}>
+                  {group.label && (
+                    <div className="sticky top-14 z-10 -mx-1 flex items-center justify-between bg-background/85 px-1 py-2 backdrop-blur">
+                      <h2 className="text-xs font-medium text-muted-foreground">{group.label}</h2>
+                      <span className="tabular text-xs text-muted-foreground">{formatSigned(group.net)}</span>
+                    </div>
+                  )}
+                  <Card className="divide-y divide-border overflow-hidden">
+                    {group.items.map((tx) => (
+                      <TransactionRow
+                        key={tx.id}
+                        tx={tx}
+                        category={tx.category ?? categoryById.get(tx.category_id)}
+                        onEdit={() => startEdit(tx)}
+                        onDelete={() => setDeletingId(tx.id)}
+                      />
+                    ))}
+                  </Card>
+                </section>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
-      {/* Delete Confirmation Modal */}
-      {deletingId && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <Card className="max-w-md w-full p-6 space-y-4 animate-in fade-in-50 zoom-in-95">
-            <div className="flex items-center gap-3 text-rose-600">
-              <div className="p-2 rounded-full bg-rose-100 dark:bg-rose-950">
-                <AlertTriangle className="h-6 w-6" />
-              </div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                Delete Transaction?
-              </h3>
-            </div>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              Are you sure you want to delete this transaction from your ledger? This action cannot be undone and will update your period summary and budget metrics.
-            </p>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" size="sm" onClick={() => setDeletingId(null)}>
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => handleDelete(deletingId)}
+      {/* Edit dialog */}
+      <Dialog
+        open={!!editingTransaction}
+        onClose={closeEdit}
+        title="Edit transaction"
+        description="Changes update your budgets and reports."
+        className="max-w-lg"
+        footer={
+          <>
+            <Button variant="outline" type="button" onClick={closeEdit}>
+              Cancel
+            </Button>
+            <Button type="submit" form="edit-transaction-form" loading={savingEdit}>
+              Save changes
+            </Button>
+          </>
+        }
+      >
+        <form id="edit-transaction-form" onSubmit={handleSaveEdit} className="space-y-4">
+          <Field label="Description" htmlFor="edit-desc">
+            <Input id="edit-desc" type="text" value={editDesc} onChange={(e) => setEditDesc(e.target.value)} required />
+          </Field>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Amount (₹)" htmlFor="edit-amount">
+              <Input
+                id="edit-amount"
+                type="number"
+                step="0.01"
+                inputMode="decimal"
+                className="tabular"
+                value={editAmount}
+                onChange={(e) => setEditAmount(e.target.value)}
+                required
+              />
+            </Field>
+            <Field label="Date" htmlFor="edit-date">
+              <Input id="edit-date" type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} required />
+            </Field>
+            <Field label="Category" htmlFor="edit-category">
+              <Select id="edit-category" value={editCategory} onChange={(e) => setEditCategory(e.target.value)}>
+                <optgroup label="Expense">
+                  {expenseCategories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Income">
+                  {incomeCategories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </optgroup>
+              </Select>
+            </Field>
+            <Field label="Essentiality" htmlFor="edit-essentiality">
+              <Select
+                id="edit-essentiality"
+                value={editEssentiality}
+                onChange={(e) => setEditEssentiality(e.target.value as Essentiality)}
               >
-                Confirm Delete
-              </Button>
-            </div>
-          </Card>
+                <option value="essential">Essential</option>
+                <option value="optimizable">Optimizable</option>
+                <option value="discretionary">Discretionary</option>
+              </Select>
+            </Field>
+            <Field label="Merchant" htmlFor="edit-merchant">
+              <Input
+                id="edit-merchant"
+                type="text"
+                placeholder="Optional"
+                value={editMerchant}
+                onChange={(e) => setEditMerchant(e.target.value)}
+              />
+            </Field>
+            <Field label="Payment method" htmlFor="edit-payment">
+              <Select id="edit-payment" value={editPaymentMethod} onChange={(e) => setEditPaymentMethod(e.target.value)}>
+                {PAYMENT_METHODS.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        </form>
+      </Dialog>
+
+      {/* Delete confirmation */}
+      <Dialog
+        open={!!deletingId}
+        onClose={closeDelete}
+        title="Delete transaction?"
+        description="It will be removed from your ledger, budgets and reports. This can't be undone."
+        footer={
+          <>
+            <Button variant="outline" onClick={closeDelete}>
+              Cancel
+            </Button>
+            <Button variant="destructive" loading={deleting} onClick={() => deletingId && handleDelete(deletingId)}>
+              Delete
+            </Button>
+          </>
+        }
+      >
+        {deletingTx && (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted px-3 py-2.5 text-sm">
+            <span className="truncate text-foreground">{deletingTx.description}</span>
+            <span className="tabular shrink-0 font-medium">
+              {deletingTx.transaction_type === 'income' ? '+' : ''}
+              {formatCurrency(Number(deletingTx.amount))}
+            </span>
+          </div>
+        )}
+      </Dialog>
+    </div>
+  );
+}
+
+function TransactionRow({
+  tx,
+  category,
+  onEdit,
+  onDelete,
+}: {
+  tx: Transaction;
+  category: Category | undefined;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const isIncome = tx.transaction_type === 'income';
+  const Icon = (category?.icon && CATEGORY_ICONS[category.icon]) || (isIncome ? ArrowUpRight : ReceiptIndianRupee);
+  const meta = [tx.merchant, category?.name ?? 'Uncategorized', tx.payment_method].filter(Boolean).join(' · ');
+
+  return (
+    <div className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/50">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
+        <Icon className="size-4" />
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <p className="truncate text-sm font-medium text-foreground" title={tx.original_input ?? undefined}>
+            {tx.description}
+          </p>
+          {tx.entry_method !== 'manual' && (
+            <span title={`Captured with ${tx.entry_method === 'ai_voice' ? 'voice' : 'AI text'}`} className="shrink-0">
+              <Sparkles className="size-3 text-subtle" aria-label="AI captured" />
+            </span>
+          )}
         </div>
+        <p className="truncate text-xs text-muted-foreground">{meta}</p>
+      </div>
+
+      {!isIncome && (
+        <Badge variant={tx.essentiality} className="hidden sm:inline-flex">
+          {ESSENTIALITY_LABELS[tx.essentiality]}
+        </Badge>
       )}
+
+      <div className="tabular w-24 shrink-0 text-right text-sm font-medium text-foreground sm:w-28">
+        {isIncome ? '+' : ''}
+        {formatCurrency(Number(tx.amount))}
+      </div>
+
+      <div className="-mr-2 flex shrink-0 items-center transition-opacity sm:pointer-fine:opacity-0 sm:pointer-fine:group-hover:opacity-100 sm:pointer-fine:group-focus-within:opacity-100">
+        <Button variant="ghost" size="icon-sm" onClick={onEdit} aria-label="Edit transaction" title="Edit">
+          <Pencil />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onDelete}
+          aria-label="Delete transaction"
+          title="Delete"
+          className="hover:text-destructive"
+        >
+          <Trash2 />
+        </Button>
+      </div>
     </div>
   );
 }

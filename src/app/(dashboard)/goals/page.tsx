@@ -1,21 +1,18 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
-import {
-  Target,
-  Plus,
-  Calendar,
-  PiggyBank,
-  CheckCircle2,
-  DollarSign,
-  X,
-  Info,
-  TrendingUp,
-} from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Plus, Target, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
+import { Textarea } from '@/components/ui/textarea';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Field } from '@/components/ui/label';
+import { Dialog } from '@/components/ui/dialog';
+import { Progress } from '@/components/ui/progress';
+import { PageHeader } from '@/components/ui/page-header';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Skeleton } from '@/components/ui/skeleton';
 import { DataService } from '@/lib/data-service';
 import { SavingsGoal } from '@/types/database';
 import { formatCurrency, formatDate } from '@/lib/utils';
@@ -25,26 +22,41 @@ import { toast } from 'sonner';
 export default function SavingsGoalsPage() {
   const [goals, setGoals] = useState<SavingsGoal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [today, setToday] = useState<string>('');
 
-  // Create Modal
+  // Create dialog
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [name, setName] = useState('');
   const [targetAmount, setTargetAmount] = useState('');
   const [currentAmount, setCurrentAmount] = useState('');
   const [targetDate, setTargetDate] = useState('');
   const [description, setDescription] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  // Add contribution modal
+  // Add money dialog
   const [selectedGoal, setSelectedGoal] = useState<SavingsGoal | null>(null);
   const [depositAmount, setDepositAmount] = useState('');
-  const [today, setToday] = useState<string>('');
+  const [depositing, setDepositing] = useState(false);
+
+  // Delete confirmation
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // Stable callbacks: Dialog re-focuses its first control whenever onClose changes.
+  const closeCreate = useCallback(() => setIsModalOpen(false), []);
+  const closeDeposit = useCallback(() => {
+    setSelectedGoal(null);
+    setDepositAmount('');
+  }, []);
+  const closeDelete = useCallback(() => setDeletingId(null), []);
 
   useEffect(() => {
-    setToday(toLocalDateString());
     async function loadData() {
       try {
         await DataService.seedDemoDataIfEmpty();
         const data = await DataService.getGoals();
+        // `today` is only set after mount, to avoid a hydration mismatch
+        setToday(toLocalDateString());
         setGoals(data);
       } catch (err) {
         console.error(err);
@@ -71,6 +83,7 @@ export default function SavingsGoalsPage() {
       return;
     }
 
+    setSaving(true);
     try {
       const created = await DataService.addGoal({
         user_id: 'current-user',
@@ -82,7 +95,7 @@ export default function SavingsGoalsPage() {
       });
 
       setGoals((prev) => [created, ...prev]);
-      toast.success('Savings goal created!');
+      toast.success('Goal created');
       setIsModalOpen(false);
       setName('');
       setTargetAmount('');
@@ -91,20 +104,27 @@ export default function SavingsGoalsPage() {
       setDescription('');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create savings goal');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleDeleteGoal = async (id: string) => {
+    setDeleting(true);
     try {
       await DataService.deleteGoal(id);
       setGoals((prev) => prev.filter((g) => g.id !== id));
-      toast.success('Goal removed.');
+      toast.success('Goal removed');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete goal');
+    } finally {
+      setDeleting(false);
+      setDeletingId(null);
     }
   };
 
-  const handleAddContribution = async () => {
+  const handleAddContribution = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!selectedGoal) return;
     const added = parseFloat(depositAmount);
     if (isNaN(added) || added <= 0) {
@@ -113,274 +133,312 @@ export default function SavingsGoalsPage() {
     }
 
     const newAmount = Number(selectedGoal.current_amount) + added;
+    setDepositing(true);
     try {
-      const updated = await DataService.updateGoal(selectedGoal.id, { current_amount: newAmount });
-      setGoals((prev) =>
-        prev.map((g) => g.id === selectedGoal.id ? { ...g, current_amount: newAmount } : g)
-      );
-      toast.success(`Added ${formatCurrency(added)} to "${selectedGoal.name}"!`);
+      await DataService.updateGoal(selectedGoal.id, { current_amount: newAmount });
+      setGoals((prev) => prev.map((g) => (g.id === selectedGoal.id ? { ...g, current_amount: newAmount } : g)));
+      toast.success(`Added ${formatCurrency(added)} to ${selectedGoal.name}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to update goal');
+    } finally {
+      setDepositing(false);
     }
     setSelectedGoal(null);
     setDepositAmount('');
   };
 
+  const newGoalButton = (
+    <Button onClick={() => setIsModalOpen(true)}>
+      <Plus />
+      New goal
+    </Button>
+  );
+
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
+      <div className="space-y-6">
+        <div className="flex items-end justify-between gap-4">
+          <div className="space-y-2">
+            <Skeleton className="h-7 w-24" />
+            <Skeleton className="h-4 w-64" />
+          </div>
+          <Skeleton className="h-9 w-28 rounded-lg" />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <Card key={i} className="space-y-4 p-5">
+              <div className="space-y-1.5">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-3 w-20" />
+              </div>
+              <Skeleton className="h-9 w-20" />
+              <Skeleton className="h-1 w-full rounded-full" />
+              <div className="grid grid-cols-2 gap-3">
+                <Skeleton className="h-8" />
+                <Skeleton className="h-8" />
+              </div>
+              <Skeleton className="h-8 w-full rounded-md" />
+            </Card>
+          ))}
+        </div>
       </div>
     );
   }
 
+  const deletingGoal = deletingId ? goals.find((g) => g.id === deletingId) : undefined;
+
   return (
     <div className="space-y-6">
-      {/* Top Bar */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Savings Goals</h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Target funds with deterministic monthly contribution roadmaps
-          </p>
-        </div>
-        <Button onClick={() => setIsModalOpen(true)} className="gap-2 bg-indigo-600 text-xs">
-          <Plus className="h-4 w-4" />
-          Create New Goal
-        </Button>
-      </div>
+      <PageHeader
+        title="Goals"
+        description="Savings targets with a suggested monthly amount to reach each one on time."
+        actions={newGoalButton}
+      />
 
-      {/* Goals Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {goals.map((goal) => {
-          const target = Number(goal.target_amount);
-          const current = Number(goal.current_amount);
-          const progress = Math.min(100, Math.round((current / target) * 100));
-          const remaining = Math.max(0, target - current);
+      {goals.length === 0 ? (
+        <EmptyState
+          icon={<Target />}
+          title="No goals yet"
+          description="Add a target, like an emergency fund or a trip, and track progress toward it."
+          action={newGoalButton}
+        />
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {goals.map((goal, i) => {
+            const target = Number(goal.target_amount);
+            const current = Number(goal.current_amount);
+            const progress = Math.min(100, Math.round((current / target) * 100));
+            const remaining = Math.max(0, target - current);
+            const reached = remaining === 0;
 
-          const suggestedMonthly = today
-            ? calculateSuggestedMonthlyContribution(target, current, goal.target_date, today)
-            : 0;
+            const suggestedMonthly = today
+              ? calculateSuggestedMonthlyContribution(target, current, goal.target_date, today)
+              : 0;
 
-          return (
-            <Card key={goal.id} className="p-5 flex flex-col justify-between space-y-4">
-              <div>
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="h-8 w-8 rounded-lg bg-emerald-50 dark:bg-emerald-950 text-emerald-600 flex items-center justify-center">
-                      <Target className="h-4 w-4" />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                        {goal.name}
-                      </h3>
-                      <span className="text-[11px] text-slate-400">
-                        Target Date: {formatDate(goal.target_date)}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={progress >= 100 ? 'success' : 'secondary'} className="text-[10px]">
-                      {progress}%
-                    </Badge>
-                    <button
-                      onClick={() => handleDeleteGoal(goal.id)}
-                      className="text-slate-400 hover:text-rose-500 transition-colors p-0.5"
-                      title="Remove goal"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                {goal.description && (
-                  <p className="text-xs text-slate-500 mt-2 line-clamp-2">
-                    {goal.description}
-                  </p>
-                )}
-
-                {/* Progress bar */}
-                <div className="mt-4 space-y-1">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-500">
-                      Saved: <strong className="text-slate-900 dark:text-white">{formatCurrency(current)}</strong>
-                    </span>
-                    <span className="text-slate-400">Target: {formatCurrency(target)}</span>
-                  </div>
-                  <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-emerald-500 rounded-full transition-all"
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* Remaining & Suggested Monthly */}
-                <div className="mt-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-xs space-y-1.5">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Remaining to reach goal:</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">
-                      {formatCurrency(remaining)}
-                    </span>
-                  </div>
-                  {remaining > 0 && (
-                    <div className="flex justify-between text-indigo-600 dark:text-indigo-400 font-medium">
-                      <span className="flex items-center gap-1">
-                        Suggested Monthly Contribution:
-                        <span title="Calculated as: remaining amount / months remaining until target date">
-                          <Info className="h-3 w-3 text-slate-400 cursor-help" />
-                        </span>
-                      </span>
-                      <span>{formatCurrency(suggestedMonthly)}/mo</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedGoal(goal)}
-                className="w-full text-xs font-semibold gap-1.5"
+            return (
+              <Card
+                key={goal.id}
+                className="flex flex-col animate-rise"
+                style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
               >
-                <Plus className="h-3.5 w-3.5 text-indigo-600" />
-                Record Contribution
-              </Button>
-            </Card>
-          );
-        })}
-      </div>
+                <CardHeader className="flex-row items-start justify-between gap-3 pb-4">
+                  <div className="min-w-0 space-y-1">
+                    <CardTitle className="truncate">{goal.name}</CardTitle>
+                    <CardDescription className="tabular">By {formatDate(goal.target_date)}</CardDescription>
+                  </div>
+                  <div className="-mr-2 -mt-1 flex shrink-0 items-center gap-1">
+                    {reached && <Badge variant="outline">Reached</Badge>}
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => setDeletingId(goal.id)}
+                      aria-label={`Delete ${goal.name}`}
+                      title="Delete goal"
+                      className="hover:text-destructive"
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                </CardHeader>
 
-      {/* Record Contribution Modal */}
-      {selectedGoal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <Card className="max-w-sm w-full p-6 space-y-4 animate-in fade-in-50 zoom-in-95">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                Add to {selectedGoal.name}
-              </h3>
-              <button onClick={() => setSelectedGoal(null)} className="text-slate-400">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Contribution Amount (₹ INR)
-              </label>
+                <CardContent className="flex flex-1 flex-col gap-4">
+                  {goal.description && (
+                    <p className="line-clamp-2 text-[13px] text-muted-foreground">{goal.description}</p>
+                  )}
+
+                  <div className="mt-auto space-y-2">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="tabular text-3xl font-semibold tracking-[-0.03em] text-foreground">
+                        {progress}%
+                      </span>
+                      <span className="tabular truncate text-xs text-muted-foreground">
+                        {formatCurrency(current)} of {formatCurrency(target)}
+                      </span>
+                    </div>
+                    <Progress value={progress} className="h-1" />
+                  </div>
+
+                  <dl className="grid grid-cols-2 gap-3 border-t border-border pt-4">
+                    <div className="space-y-0.5">
+                      <dt className="text-xs text-muted-foreground">Remaining</dt>
+                      <dd className="tabular text-sm font-medium text-foreground">{formatCurrency(remaining)}</dd>
+                    </div>
+                    <div className="space-y-0.5">
+                      <dt
+                        className="text-xs text-muted-foreground"
+                        title="Remaining amount divided by the months left until the target date"
+                      >
+                        Suggested monthly
+                      </dt>
+                      <dd className="tabular text-sm font-medium text-foreground">
+                        {reached ? '—' : `${formatCurrency(suggestedMonthly)}/mo`}
+                      </dd>
+                    </div>
+                  </dl>
+                </CardContent>
+
+                <CardFooter>
+                  <Button variant="outline" size="sm" className="w-full" onClick={() => setSelectedGoal(goal)}>
+                    <Plus />
+                    Add money
+                  </Button>
+                </CardFooter>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Add money dialog */}
+      <Dialog
+        open={!!selectedGoal}
+        onClose={closeDeposit}
+        title="Add money"
+        description={
+          selectedGoal
+            ? `${selectedGoal.name}: ${formatCurrency(Number(selectedGoal.current_amount))} of ${formatCurrency(
+                Number(selectedGoal.target_amount)
+              )} saved.`
+            : undefined
+        }
+        className="max-w-sm"
+        footer={
+          <>
+            <Button variant="outline" type="button" onClick={closeDeposit}>
+              Cancel
+            </Button>
+            <Button type="submit" form="add-money-form" loading={depositing}>
+              Add money
+            </Button>
+          </>
+        }
+      >
+        <form id="add-money-form" onSubmit={handleAddContribution}>
+          <Field label="Amount (₹)" htmlFor="deposit-amount">
+            <Input
+              id="deposit-amount"
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="any"
+              placeholder="5000"
+              className="tabular"
+              value={depositAmount}
+              onChange={(e) => setDepositAmount(e.target.value)}
+              autoFocus
+              required
+            />
+          </Field>
+        </form>
+      </Dialog>
+
+      {/* Create dialog */}
+      <Dialog
+        open={isModalOpen}
+        onClose={closeCreate}
+        title="New goal"
+        description="We'll work out how much to set aside each month."
+        footer={
+          <>
+            <Button variant="outline" type="button" onClick={closeCreate}>
+              Cancel
+            </Button>
+            <Button type="submit" form="create-goal-form" loading={saving}>
+              Create goal
+            </Button>
+          </>
+        }
+      >
+        <form id="create-goal-form" onSubmit={handleCreateGoal} className="space-y-4">
+          <Field label="Name" htmlFor="goal-name">
+            <Input
+              id="goal-name"
+              type="text"
+              placeholder="Emergency fund"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </Field>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Target (₹)" htmlFor="goal-target">
               <Input
+                id="goal-target"
                 type="number"
-                placeholder="e.g. 5000"
-                value={depositAmount}
-                onChange={(e) => setDepositAmount(e.target.value)}
-                autoFocus
+                inputMode="decimal"
+                min="0"
+                step="any"
+                placeholder="100000"
+                className="tabular"
+                value={targetAmount}
+                onChange={(e) => setTargetAmount(e.target.value)}
+                required
               />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" size="sm" onClick={() => setSelectedGoal(null)}>
-                Cancel
-              </Button>
-              <Button size="sm" variant="ai" onClick={handleAddContribution}>
-                Add Funds
-              </Button>
-            </div>
-          </Card>
-        </div>
-      )}
+            </Field>
+            <Field label="Already saved (₹)" htmlFor="goal-current">
+              <Input
+                id="goal-current"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="any"
+                placeholder="0"
+                className="tabular"
+                value={currentAmount}
+                onChange={(e) => setCurrentAmount(e.target.value)}
+              />
+            </Field>
+          </div>
 
-      {/* Modal to create new savings goal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <Card className="max-w-md w-full p-6 space-y-4 animate-in fade-in-50 zoom-in-95">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                Create Savings Goal
-              </h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+          <Field label="Target date" htmlFor="goal-date">
+            <Input
+              id="goal-date"
+              type="date"
+              min={today || undefined}
+              value={targetDate}
+              onChange={(e) => setTargetDate(e.target.value)}
+              required
+            />
+          </Field>
 
-            <form onSubmit={handleCreateGoal} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Goal Name *
-                </label>
-                <Input
-                  type="text"
-                  placeholder="e.g. Vacation to Ladakh, New Laptop, Emergency Fund"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                />
-              </div>
+          <Field label="Note" htmlFor="goal-note" hint="Optional">
+            <Textarea
+              id="goal-note"
+              rows={2}
+              placeholder="Six months of expenses in a savings account"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </Field>
+        </form>
+      </Dialog>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Target Amount (₹) *
-                  </label>
-                  <Input
-                    type="number"
-                    placeholder="100000"
-                    value={targetAmount}
-                    onChange={(e) => setTargetAmount(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Already Saved (₹)
-                  </label>
-                  <Input
-                    type="number"
-                    placeholder="0"
-                    value={currentAmount}
-                    onChange={(e) => setCurrentAmount(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Target Completion Date *
-                </label>
-                <Input
-                  type="date"
-                  value={targetDate}
-                  onChange={(e) => setTargetDate(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Description / Purpose (Optional)
-                </label>
-                <Input
-                  type="text"
-                  placeholder="e.g. 6-month safety buffer in high-yield account"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-              </div>
-
-              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 text-[11px] text-slate-500">
-                SpendWise will automatically calculate the monthly deposit required based on your target date.
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="outline" type="button" onClick={() => setIsModalOpen(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit" variant="ai">
-                  Save Goal
-                </Button>
-              </div>
-            </form>
-          </Card>
-        </div>
-      )}
+      {/* Delete confirmation */}
+      <Dialog
+        open={!!deletingId}
+        onClose={closeDelete}
+        title="Delete goal?"
+        description={
+          deletingGoal
+            ? `"${deletingGoal.name}" and its saved progress will be removed. This can't be undone.`
+            : "This goal will be removed. This can't be undone."
+        }
+        footer={
+          <>
+            <Button variant="outline" onClick={closeDelete}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              loading={deleting}
+              onClick={() => deletingId && handleDeleteGoal(deletingId)}
+            >
+              Delete
+            </Button>
+          </>
+        }
+      />
     </div>
   );
 }
