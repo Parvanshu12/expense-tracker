@@ -39,7 +39,17 @@ export interface EntryResponse {
   reply: string;
   /** One friendly sentence about what was recorded (no numbers). */
   feedback: string | null;
+  /** "Map all Prince Kumar payments to travel": file everything to/from this payee under one category. */
+  rule?: EntryRule | null;
   source: 'workers-ai' | 'heuristic';
+}
+
+export interface EntryRule {
+  /** The name as the user wrote it (may have typos; the client matches it loosely). */
+  payee: string;
+  category_id: string;
+  category: string;
+  transaction_type: 'expense' | 'income';
 }
 
 export interface StatementResponse {

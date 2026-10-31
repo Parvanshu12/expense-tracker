@@ -4,7 +4,7 @@ import { callAiWorker } from '@/lib/server/ai-worker';
 import { getEnv } from '@/lib/server/env';
 import { getSessionUser } from '@/lib/server/auth';
 import { ApiError, handle, parseBody } from '@/lib/server/http';
-import { categoryNames, loadCategories, modelItem, profileSchema, toEntryItem } from '@/lib/server/entry-shared';
+import { categoryNames, loadCategories, modelItem, profileSchema, toEntryItem, type CategoryRow } from '@/lib/server/entry-shared';
 import { toLocalDateString } from '@/lib/calculations/finance';
 import { parseExpensesHeuristically } from '@/lib/ai/heuristic-parser';
 import type { EntryResponse } from '@/types/entry';
@@ -40,10 +40,30 @@ const requestSchema = z.object({
     .optional(),
 });
 
+/**
+ * A category the user named themselves ("...to traveling" -> Travel, "groceries mein" -> Groceries).
+ * Only when exactly one category of that type matches, so the user's own word wins over the model's pick.
+ */
+function namedCategory(message: string, categories: CategoryRow[], type: 'expense' | 'income'): CategoryRow | undefined {
+  const words = message.toLowerCase().split(/[^\p{L}]+/u).filter((w) => w.length >= 4);
+  const named = categories.filter(
+    (c) =>
+      c.category_type === type &&
+      c.name
+        .toLowerCase()
+        .split(/[^\p{L}]+/u)
+        .filter((part) => part.length >= 4)
+        .some((part) => words.some((w) => w.startsWith(part) || part.startsWith(w)))
+  );
+  return named.length === 1 ? named[0] : undefined;
+}
+
 const modelResponse = z.object({
   items: z.array(modelItem).max(15),
   reply: z.string().max(600).default(''),
   feedback: z.string().max(300).nullable().default(null),
+  rule_payee: z.string().max(80).nullable().default(null),
+  rule_category: z.string().max(60).nullable().default(null),
 });
 
 /**
@@ -74,7 +94,19 @@ export const POST = handle(async (request: NextRequest) => {
     });
     const json = (await response.json()) as { data: unknown };
     const data = modelResponse.parse(json.data);
+    const modelCategory = data.rule_payee?.trim()
+      ? categories.find((c) => c.name.toLowerCase() === data.rule_category?.toLowerCase())
+      : undefined;
+    const ruleCategory = modelCategory && (namedCategory(body.message, categories, modelCategory.category_type) ?? modelCategory);
     const result: EntryResponse = {
+      rule: ruleCategory
+        ? {
+            payee: data.rule_payee!.trim(),
+            category_id: ruleCategory.id,
+            category: ruleCategory.name,
+            transaction_type: ruleCategory.category_type,
+          }
+        : null,
       items: data.items.map((i) => toEntryItem(i, categories, today, pendingRefs)),
       reply: data.reply,
       feedback: data.feedback,

@@ -15,11 +15,13 @@ import { DataService } from '@/lib/data-service';
 import { chatKey, clearChat, loadChat, saveChat } from '@/lib/chat-memory';
 import { mainGoalLabels } from '@/lib/main-goals';
 import { findDuplicates } from '@/lib/ai/dedupe';
+import { namesMatch } from '@/lib/ai/payee-match';
+import { tidyPayee } from '@/lib/ai/statement-parser';
 import { calculateBudgetSpent, spendingWarnings, toLocalDateString, type SpendingWarning } from '@/lib/calculations/finance';
 import { kindForCategory, PURCHASE_KINDS } from '@/lib/categories/kinds';
 import { cn, formatCurrency } from '@/lib/utils';
 import type { AiExtractionData, Budget, Category, EntryMethod, Essentiality, SavingsGoal, Transaction, TransactionType } from '@/types/database';
-import type { EntryContext, EntryItem, EntryProfile, EntryResponse, ImportJob, ReceiptResponse, StatementResponse } from '@/types/entry';
+import type { EntryContext, EntryItem, EntryProfile, EntryResponse, EntryRule, ImportJob, ReceiptResponse, StatementResponse } from '@/types/entry';
 import { isSandbox } from '@/lib/auth-client';
 
 // ---------------------------------------------------------------------------
@@ -193,9 +195,19 @@ function shortDate(date: string): string {
 
 const rupees = (n: number) => formatCurrency(n).replace(/\.00$/, '');
 
+/** Who a statement row is to / from: "Payment to Prince Kumar" -> "Prince Kumar". */
+function payeeOf(d: PendingDraft): string {
+  return d.payee || tidyPayee(d.merchant || d.description);
+}
+
+function txPayee(t: Transaction): string {
+  const fromImport = (t.ai_extraction as { payee?: string | null } | null)?.payee;
+  return fromImport || tidyPayee(t.merchant || t.description);
+}
+
 /** Questions about statement rows are written here from the data, never by the model. */
 function questionFor(p: PendingDraft): string {
-  const who = p.payee || p.merchant || p.description;
+  const who = p.from === 'statement' ? payeeOf(p) : p.payee || p.merchant || p.description;
   if (p.needs === 'category' && p.siblings?.length) {
     const count = p.siblings.length + 1;
     const total = [p, ...p.siblings].reduce((sum, d) => sum + (d.amount ?? 0), 0);
@@ -221,7 +233,7 @@ function groupByPayee(drafts: PendingDraft[]): PendingDraft[] {
       others.push(d);
       continue;
     }
-    const key = `${d.transaction_type}|${(d.payee || d.merchant || d.description).toLowerCase().trim()}`;
+    const key = `${d.transaction_type}|${payeeOf(d).toLowerCase().trim()}`;
     groups.set(key, [...(groups.get(key) ?? []), d]);
   }
   const total = (g: PendingDraft[]) => g.reduce((sum, d) => sum + (d.amount ?? 0), 0);
@@ -283,7 +295,14 @@ export default function AddExpensePage() {
       const saved = loadChat<{ messages: Message[]; pending: PendingDraft[] }>(memoryKey);
       if (saved) {
         setMessages(saved.messages ?? []);
-        setPending(saved.pending ?? []);
+        // Older chats saved one question per payment; ask about each person once.
+        const queue = groupByPayee((saved.pending ?? []).flatMap(membersOf));
+        setPending(queue);
+        // Re-ask the current question so it matches the regrouped queue.
+        const last = saved.messages?.at(-1);
+        if (queue.length && last?.question && last.question !== questionFor(queue[0])) {
+          setMessages([...(saved.messages ?? []), { id: nextId('a'), role: 'assistant', question: questionFor(queue[0]) }]);
+        }
       }
       setRestored(true);
     }
@@ -500,6 +519,12 @@ export default function AddExpensePage() {
       });
       const data = (await res.json()) as EntryResponse & { error?: string };
       if (!res.ok) throw new Error(data.error || 'Something went wrong');
+
+      // "Map all Prince Kumar payments to travel": file every matching payment, open or saved.
+      if (data.rule && data.items.every((i) => i.amount === null)) {
+        await applyRule(data.rule, text, method);
+        return;
+      }
 
       // A typed answer to "what was this for?" ("for house renovation: flooring"). Never ask the same
       // question again: use the closest category the AI found, or keep the current guess.
@@ -777,6 +802,62 @@ export default function AddExpensePage() {
       setPending(queue);
       say({ question: questionFor(queue[0]) });
     }
+  };
+
+  /** Files every payment to / from a payee under one category: open questions and saved entries alike. */
+  const applyRule = async (rule: EntryRule, text: string, method: EntryMethod) => {
+    const sameType = (type: TransactionType) => type === rule.transaction_type;
+    const all = pending.flatMap(membersOf);
+    const hit = all.filter((d) => sameType(d.transaction_type) && namesMatch(rule.payee, payeeOf(d)));
+    const keep = all.filter((d) => !hit.includes(d));
+    const savedHits = transactions.filter((t) => sameType(t.transaction_type) && namesMatch(rule.payee, txPayee(t)));
+    const names = [...new Set([...hit.map(payeeOf), ...savedHits.map(txPayee)])];
+    const direction = rule.transaction_type === 'income' ? 'from' : 'to';
+
+    if (!hit.length && !savedHits.length) {
+      say({
+        text: `I couldn't find any payments ${direction} "${rule.payee}". Check how the name appears in My spending and try again.`,
+        question: pending.length ? questionFor(pending[0]) : undefined,
+      });
+      return;
+    }
+
+    const unsaved = hit.filter((d) => !d.transactionId && d.amount !== null);
+    const { saved } = await saveDrafts(
+      unsaved.map((d) => ({ ...d, category_id: rule.category_id, category: rule.category, needs: null, question: null, options: [] })),
+      text,
+      method
+    );
+    const ids = [
+      ...new Set([
+        ...hit.map((d) => d.transactionId).filter((id): id is string => Boolean(id)),
+        ...savedHits.map((t) => t.id),
+        ...saved.map((t) => t.id),
+      ]),
+    ];
+    try {
+      // Marked as the user's choice, so the next import files this payee the same way.
+      await DataService.updateTransactions(ids, {
+        category_id: rule.category_id,
+        review_status: 'confirmed',
+        user_corrected_classification: true,
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't update those entries");
+      return;
+    }
+    const allTx = await DataService.getTransactions().catch(() => transactions);
+    setTransactions(allTx);
+    const rest = groupByPayee(keep);
+    setPending(rest);
+
+    const who = names.length <= 3 ? names.join(', ') : `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
+    say({
+      text: `Done. ${ids.length === 1 ? '1 payment' : `${ids.length} payments`} ${direction} ${who} ${ids.length === 1 ? 'is' : 'are'} now under ${rule.category}${hit.length && pending.length > rest.length ? `, and I've closed ${pending.length - rest.length === 1 ? 'that question' : `${pending.length - rest.length} questions`}` : ''}. I'll remember this next time.`,
+      notes: warningsFor(allTx.filter((t) => ids.includes(t.id)), allTx),
+      question: rest.length ? questionFor(rest[0]) : undefined,
+    });
+    if (pending.length && !rest.length) say({ text: "That's everything from your statement. Anything else?" });
   };
 
   /** "Keep the rest as they are": accept the best guess for every open statement question. */

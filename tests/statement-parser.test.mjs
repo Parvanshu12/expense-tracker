@@ -70,3 +70,17 @@ describe('tidyPayee', () => {
     assert.equal(tidyPayee('Paid to Durga Singh S/o Ram Prasad'), 'Durga Singh');
   });
 });
+
+describe('namesMatch', () => {
+  it('matches what the user typed against statement names, typos included', async () => {
+    const { namesMatch } = await import('../src/lib/ai/payee-match.ts');
+    assert.equal(namesMatch('price kumar', 'Prince Kumar'), true);
+    assert.equal(namesMatch('all Prince Kumar payments', 'Prince Kumar'), true);
+    assert.equal(namesMatch('blinkit wale', 'Blinkit Commerce Private Limited'), true);
+    assert.equal(namesMatch('prince', 'Prince Kumar'), true);
+    assert.equal(namesMatch('price kumar', 'Parveen Kumar Dua'), false);
+    assert.equal(namesMatch('ravi', 'Ravi Kumar'), true);
+    assert.equal(namesMatch('ravi', 'Rajiv Kumar'), false);
+    assert.equal(namesMatch('payments', 'Prince Kumar'), false);
+  });
+});
