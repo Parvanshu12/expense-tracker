@@ -1,57 +1,133 @@
 # SpendWise
 
-Know where your money goes. Note an expense in one sentence (English or Hinglish) or by voice, see what was essential and what was optional, set budgets with 75/90/100% alerts, and ask an AI money coach that only uses your own numbers.
+Know where your money goes. SpendWise is a personal expense tracker for India (₹, Asia/Kolkata, English and Hinglish). You tell it what you spent the way you'd tell a friend, and it keeps the books.
 
-**Live:** https://spendwise.dishis.workers.dev
+**Live:** https://spendwise.dishis.workers.dev · **Try it without an account:** open the site and choose **Try the demo**.
 
-Runs entirely on Cloudflare:
+## What it does
 
-| Piece | What it does |
+| | |
 |---|---|
-| **App** — Next.js 16 on Workers via [OpenNext](https://opennext.js.org/cloudflare) | UI, API routes, sign-in |
-| **Cloudflare D1** (`spendwise-db`) | Users, sessions, transactions, budgets, goals |
-| **`spendwise-ai` worker** — Workers AI (Cloudflare-hosted models only) | Chat entry, statements and bill photos (Llama 4 Scout, JSON mode + vision), money coach (Llama 3.3 70B, streamed), voice (Whisper), PDF reading (`toMarkdown`) |
-| **Cloudflare R2** (`spendwise-statements`) | Uploaded bank statements for background imports |
-| **Cloudflare Workflows** (`spendwise-statement-import`) | Reads big statements in the background, step by step with retries; keeps going if the user closes the page |
-| **Workers rate limiting** | Sign-in attempts and AI calls |
+| **Chat to add spending** | Type or say several things at once ("450 lunch, 1200 petrol, kal auto mein 120 diye"). It saves them, and only asks about what's missing, with tap-to-answer options. |
+| **Bank statements** | Drop a PDF, Excel or CSV statement into the chat. It's read in the background with a live progress log (you can close the page), duplicates are skipped, and you're asked once per person about unclear payments. |
+| **Photos** | Snap a bill, receipt, payment screenshot or the item itself. |
+| **Plain-language commands** | "Map all Prince Kumar payments to travel", "he's my cousin, I pay him my phone EMI": one answer files every matching payment and is remembered for next time. |
+| **Feedback and warnings** | A short comment on each purchase, plus exact warnings when a budget is running out or a goal is at risk. |
+| **Home, Timeline, Reports** | Left to spend this month, a pace chart, where it went, essential vs could-trim vs optional. |
+| **Budgets and savings goals** | 75 / 90 / 100% alerts and suggested monthly amounts. |
+| **Future planner** | What your own optional spending could become in an FD, a debt fund, an index fund or stocks, plus an advanced calculator. |
+| **Ask for advice** | A money coach that answers from your own numbers. |
 
-### Bank statements
+Everything is shaped by who you are: office job, business, freelance, student, homemaker or retired, plus your goals.
 
-Drop a PDF, Excel or CSV statement into the chat (or attach it). Signed-in users get a background import: the file goes to R2 and a Workflow reads it while the chat shows live progress ("Found 545 transactions on 78 pages", "Sorted payees 1–50: Blinkit → Groceries …"), so the page can be closed.
+## How it's built
 
-- **Reading:** regular layouts (UPI apps such as Navi, PhonePe, Paytm) are read by code (`src/lib/ai/statement-parser.ts`), so amounts, dates and money-in/money-out come straight from the file. Other layouts fall back to Workers AI page by page.
-- **Sorting:** the AI only sorts payee names into categories.
-- **Card bills and wallet top-ups** are left out so nothing counts twice.
-- **Duplicates** already recorded are skipped.
-- **Questions:** you're asked once per person (biggest first), with a "Keep all as sorted" option. Your answers are remembered for the next import.
+Everything runs on Cloudflare:
 
-See [PROJECT.md](./PROJECT.md) for the full architecture.
+| Piece | Role |
+|---|---|
+| **Next.js 16 on Workers** via [OpenNext](https://opennext.js.org/cloudflare) (`spendwise`) | UI, API routes, sign-in |
+| **D1** (`spendwise-db`) | Users, sessions, categories, transactions, budgets, goals, import jobs |
+| **R2** (`spendwise-statements`) | Uploaded bank statements |
+| **AI worker** (`workers/spendwise-ai`, `spendwise-ai`) | All AI calls, using Cloudflare-hosted models only |
+| **Workers AI** | Llama 4 Scout for chat entry, statements and photos (vision); Llama 3.3 70B for the coach; Whisper for voice; `toMarkdown` for PDFs |
+| **Workflows** (`spendwise-statement-import`) | Background statement imports, step by step with retries |
+| **Rate limiting** | Sign-in attempts per IP; AI calls per user |
+
+A few principles hold throughout:
+
+- **The AI never does the maths.** All totals, budgets, warnings and projections are computed in code (`src/lib/calculations`).
+- **Statements are read exactly.** Amounts and dates come from the file itself, and the AI only sorts payees into categories.
+- **The app keeps working without AI.** If the AI is down, an offline parser and basic coach answers take over.
+
+Read more:
+- [PROJECT.md](./PROJECT.md): architecture, data flow, AI design, conventions
+- [docs/API.md](./docs/API.md): the app's HTTP API
+- [workers/spendwise-ai/README.md](./workers/spendwise-ai/README.md): the AI worker, its endpoints and the import Workflow
+- [CONTRIBUTING.md](./CONTRIBUTING.md) · [SECURITY.md](./SECURITY.md) · [TODO.md](./TODO.md)
 
 ## Run locally
 
-Requires Node 22.18+ and a Cloudflare login (`npx wrangler login`) for the AI features.
+You need **Node 22.18+** and a Cloudflare account. The AI features call the deployed AI worker.
 
-```bash
-npm install --legacy-peer-deps
-```
+1. Install dependencies:
 
-```bash
-npm run db:migrate:local
-```
+   ```bash
+   npm install --legacy-peer-deps
+   ```
 
-Create `.dev.vars` (gitignored) with the AI worker secret:
+2. Create the local database (stored in `.wrangler/`):
 
-```env
-CF_AI_WORKER_SECRET=<same value as API_SECRET on the spendwise-ai worker>
-```
+   ```bash
+   npm run db:migrate:local
+   ```
 
-```bash
-npm run dev
-```
+3. Copy `.dev.vars.example` to `.dev.vars` in the project root (gitignored) and fill in the shared AI secret:
 
-Open http://localhost:3000. `next dev` gets the D1, rate-limit and AI bindings from `wrangler.jsonc` through OpenNext (local D1 lives in `.wrangler/`). Without the secret, extraction falls back to the offline parser and the coach to basic answers. **Try the demo** on the sign-in page runs on sample data in your browser with no account.
+   ```env
+   CF_AI_WORKER_SECRET=<same value as API_SECRET on the spendwise-ai worker>
+   ```
+
+4. Start the dev server:
+
+   ```bash
+   npm run dev
+   ```
+
+Open http://localhost:3000. `next dev` picks up the D1, R2 and rate-limit bindings from `wrangler.jsonc` through OpenNext.
+
+- **Without the secret:** chat entry falls back to the offline parser and the coach to basic answers.
+- **Background statement imports** run in the deployed Workflow against the production D1 and R2, so test them on the deployed app. Locally (and in the demo) statements are read inline instead.
 
 ## Deploy
+
+### First time on a new Cloudflare account
+
+1. Sign in:
+
+   ```bash
+   npx wrangler login
+   ```
+
+2. Create the database. Put the returned id into `database_id` in both `wrangler.jsonc` and `workers/spendwise-ai/wrangler.jsonc`:
+
+   ```bash
+   npx wrangler d1 create spendwise-db
+   ```
+
+3. Create the statements bucket:
+
+   ```bash
+   npx wrangler r2 bucket create spendwise-statements
+   ```
+
+4. Apply the migrations:
+
+   ```bash
+   npm run db:migrate:remote
+   ```
+
+5. Deploy the AI worker. Set its secret first; use a long random value:
+
+   ```bash
+   cd workers/spendwise-ai && npm install && npx wrangler secret put API_SECRET && npx wrangler deploy
+   ```
+
+6. Give the app the same secret, and point `CF_AI_WORKER_URL` in `wrangler.jsonc` at the AI worker's URL:
+
+   ```bash
+   npx wrangler secret put CF_AI_WORKER_SECRET
+   ```
+
+7. Deploy the app:
+
+   ```bash
+   npm run deploy
+   ```
+
+### After that
+
+Apply any new migrations, then deploy the app:
 
 ```bash
 npm run db:migrate:remote
@@ -61,31 +137,51 @@ npm run db:migrate:remote
 npm run deploy
 ```
 
-First deploy only: `npx wrangler secret put CF_AI_WORKER_SECRET`.
-
-The AI worker lives in `workers/spendwise-ai` and deploys separately:
+Redeploy the AI worker whenever `workers/spendwise-ai` changes:
 
 ```bash
-cd workers/spendwise-ai && npm install && npx wrangler deploy
+cd workers/spendwise-ai && npx wrangler deploy
 ```
+
+Stop `next dev` before `npm run deploy`. Both write to `.next/`, and a running dev server makes the build fail.
 
 ## Scripts
 
-| Command | Description |
+| Command | What it does |
 |---|---|
-| `npm run dev` | Local dev server with Cloudflare bindings |
-| `npm test` | Unit tests (`tests/*.test.mjs`): finance maths, offline parser, duplicate matching, statement reader |
+| `npm run dev` | Dev server with Cloudflare bindings |
+| `npm test` | Unit tests (`tests/*.test.mjs`): finance and investment maths, offline parser, duplicate matching, statement reader, name matching |
 | `npm run lint` | ESLint |
+| `npx tsc --noEmit -p .` | Type check |
 | `npm run preview` | Build with OpenNext and run in the Workers runtime locally |
-| `npm run deploy` | Build with OpenNext and deploy to Cloudflare |
-| `npm run db:migrate:local` / `db:migrate:remote` | Apply `migrations/` to local / production D1 |
+| `npm run deploy` | Build with OpenNext and deploy |
+| `npm run db:migrate:local` / `db:migrate:remote` | Apply `migrations/` to the local / production D1 |
 | `npm run cf-typegen` | Regenerate `cloudflare-env.d.ts` after changing `wrangler.jsonc` |
+
+## Project layout
+
+```
+src/app/                 Pages (landing, sign-in, onboarding, dashboard pages) and API routes (src/app/api)
+src/components/          UI primitives ("Ledger" design system) and the app shell
+src/lib/calculations/    All money maths (finance.ts, invest.ts), pure and unit-tested
+src/lib/ai/              Offline parser, statement reader, duplicate and name matching (pure, tested)
+src/lib/server/          Auth, D1 helpers, validation schemas, AI worker client
+src/lib/data-service.ts  One data layer: the API when signed in, localStorage in the demo
+workers/spendwise-ai/    The AI worker and the statement-import Workflow
+migrations/              D1 schema
+tests/                   node:test suites that import the real TypeScript modules
+```
 
 ## Security
 
-- Passwords: PBKDF2-SHA256 (100k iterations, per-user salt). Sessions: random tokens in an httpOnly, Secure, SameSite=Lax cookie; only their SHA-256 is stored.
-- Every API route checks the session and scopes queries to the signed-in user.
-- The AI worker is called only from the server with a shared secret, and is rate-limited per user (or per IP for the demo).
-- AI never computes financial figures. The coach receives totals the app calculated and is told to quote only those.
+- **Passwords:** PBKDF2-SHA256 with 100k iterations and a per-user salt.
+- **Sessions:** a random token in an httpOnly, Secure, SameSite=Lax cookie. Only the token's SHA-256 is stored.
+- **API routes:** every route checks the session and scopes queries to the signed-in user.
+- **AI worker:** called only from the server, with a shared secret, and rate-limited per user.
+- **Uploaded statements** are kept in a private R2 bucket under the user's id. Bill photos are not stored.
 
-MIT License.
+See [SECURITY.md](./SECURITY.md) for how to report a problem.
+
+## License
+
+[MIT](./LICENSE)

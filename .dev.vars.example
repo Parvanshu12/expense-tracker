@@ -1,0 +1,4 @@
+# Copy to .dev.vars (gitignored) for `npm run dev`.
+# Same value as API_SECRET on the spendwise-ai worker. Without it, chat entry
+# falls back to the offline parser and the coach to basic answers.
+CF_AI_WORKER_SECRET=

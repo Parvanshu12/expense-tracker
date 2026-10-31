@@ -1,0 +1,5 @@
+# Copy to .dev.vars (gitignored) for `npx wrangler dev`.
+# Shared secret; the app sends it as CF_AI_WORKER_SECRET.
+API_SECRET=
+# Local model comparisons only: lets an `x-model` header pick the model. Never set in production.
+# ALLOW_MODEL_OVERRIDE=true

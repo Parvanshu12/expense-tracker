@@ -1,142 +1,242 @@
-# SpendWise — Architecture reference
+# SpendWise: architecture reference
 
-Personal expense tracker for India (INR, Asia/Kolkata, English and Hinglish). Note expenses in a sentence or by voice, classify spending as essential / could-trim / optional, track budgets and goals, and ask an AI coach grounded in the app's own figures. Everything runs on Cloudflare.
+SpendWise is a personal expense tracker for India: INR, Asia/Kolkata time, English and Hinglish. People add spending by chatting, by voice, from bank statements or from photos. The app classifies each purchase as essential, could-trim or optional, tracks budgets and goals, and explains it all in plain words. Everything runs on Cloudflare.
+
+For setup and deployment, see [README.md](./README.md). For the HTTP API, see [docs/API.md](./docs/API.md). For the AI worker, see [workers/spendwise-ai/README.md](./workers/spendwise-ai/README.md).
 
 ## 1. System
 
 ```
 Browser (React 19 client components)
-   │  fetch /api/*            (session cookie)
+   │  fetch /api/*  (session cookie spendwise_session)
    ▼
-spendwise  — Next.js 16 on Workers via OpenNext       https://spendwise.dishis.workers.dev
-   ├─ D1  "spendwise-db" (binding DB)                 users, sessions, categories, transactions, budgets, savings_goals
-   ├─ Rate limit (binding AUTH_LIMITER)               sign-in / sign-up / email lookup, per IP
-   └─ fetch + Bearer CF_AI_WORKER_SECRET
+spendwise: Next.js 16 on Workers via OpenNext            https://spendwise.dishis.workers.dev
+   ├─ D1 "spendwise-db"          (binding DB)            users, sessions, categories, transactions, budgets,
+   │                                                     savings_goals, import_jobs
+   ├─ R2 "spendwise-statements"  (binding STATEMENTS)    uploaded statements: <userId>/<jobId>/<file>
+   ├─ Rate limit                 (binding AUTH_LIMITER)  sign-in / sign-up / email lookup, 10 per minute per IP
+   └─ fetch + Bearer CF_AI_WORKER_SECRET, X-Client-Id: <user id or IP>
         ▼
-spendwise-ai — separate Worker (workers/spendwise-ai) https://spendwise-ai.dishis.workers.dev
-   ├─ Workers AI  @cf/meta/llama-3.1-8b-instruct-fast   POST /v1/extract   (JSON mode, ~1.2 s)
-   ├─ Workers AI  @cf/meta/llama-3.3-70b-instruct-fp8-fast  POST /v1/coach (streamed plain text)
-   ├─ Workers AI  @cf/openai/whisper-large-v3-turbo     POST /v1/transcribe
-   └─ Rate limit (binding RATE_LIMITER)               30 req/min per user id or IP
+spendwise-ai: AI worker (workers/spendwise-ai)           https://spendwise-ai.dishis.workers.dev
+   ├─ Workers AI   Llama 4 Scout 17B (ENTRY_MODEL)       /v1/entry, /v1/statement, /v1/receipt (vision), payee sorting
+   │               Llama 3.3 70B fp8-fast (TEXT_MODEL)   /v1/coach (streamed)
+   │               Llama 3.1 8B fast (EXTRACT_MODEL)     /v1/extract (single-expense form helper)
+   │               Whisper large v3 turbo (SPEECH_MODEL) /v1/transcribe
+   │               env.AI.toMarkdown                     PDF / Excel to text
+   ├─ Workflow  spendwise-statement-import (STATEMENT_IMPORT)  background imports, started by /v1/jobs/statement
+   ├─ D1 (same database) + R2 (same bucket)              read by the Workflow
+   └─ Rate limit (RATE_LIMITER)                          30 requests per minute per client id
 ```
 
-Why a separate AI worker: the secret-protected AI surface stays small, can be deployed and rate-limited on its own, and the app keeps working (offline parser, basic coach answers) if it is down.
+**Why a separate AI worker:**
+- The secret-protected AI surface stays small.
+- It deploys and is rate-limited on its own, and it can host the long-running Workflow.
+- The app keeps working if it is down: the offline parser takes over and the coach gives basic answers.
 
 ## 2. Directory map
 
 ```
-wrangler.jsonc               App worker config: D1, rate limiter, vars
-open-next.config.ts          OpenNext adapter config
-cloudflare-env.d.ts          Generated binding types (npm run cf-typegen)
-migrations/                  D1 schema: 0001 init + categories, 0002 main_goals, 0003 user_type
-workers/spendwise-ai/        AI worker (own package.json and wrangler.jsonc)
+wrangler.jsonc                 App worker: D1, R2, rate limiter, CF_AI_WORKER_URL
+open-next.config.ts            OpenNext adapter config
+cloudflare-env.d.ts            Generated binding types (npm run cf-typegen)
+migrations/                    0001 init + system categories, 0002 main_goals, 0003 user_type, 0004 import_jobs
+workers/spendwise-ai/          AI worker + Workflow (own package.json and wrangler.jsonc)
 src/
   app/
-    page.tsx                 Landing page
-    (auth)/login             Single email-first sign-in / sign-up form
-    (auth)/signup            Redirects to /login
-    (auth)/onboarding        Two-step setup after sign-up
-    (dashboard)/*            App pages (wrapped by SessionProvider + sidebar shell)
-    api/auth/*               lookup, login, signup, logout, me
-    api/profile|categories|transactions|budgets|goals   CRUD, all scoped to the session user
-    api/ai/extract|coach|transcribe|status              Proxies to the AI worker
-  components/ui/*            Monochrome design system (Button, Card, Dialog, Segmented, Stat, ...)
-  components/layout/*        Sidebar, header, SessionProvider (client-side auth guard)
+    page.tsx                   Landing page
+    (auth)/login               Single email-first sign-in / sign-up form (+ "Try the demo")
+    (auth)/onboarding          Two steps: who you are (user type, income) and goals
+    (dashboard)/dashboard      Home: left to spend, pace chart, where it went, budget rings, recent
+    (dashboard)/add-expense    The chat: text, voice, photos, statements, drag and drop, questions
+    (dashboard)/transactions   "My spending": search, filters, edit
+    (dashboard)/timeline       Day-by-day timeline coloured by kind of purchase
+    (dashboard)/budgets|goals  Budgets with alerts; savings goals
+    (dashboard)/wealth-simulator  Future planner: Simple view (own data) and Advanced calculator
+    (dashboard)/insights       "Ask for advice": streamed coach + what-if sliders
+    (dashboard)/reports        Weekly / monthly / yearly reports, CSV export
+    (dashboard)/settings       Profile, categories, demo reset
+    api/…                      See docs/API.md
+  components/ui/               Ledger design system: Money, Metric/MetricStrip, Section, PageHeader, Button,
+                               Card, Dialog, Segmented, Progress, Input, Select, Skeleton, EmptyState, ...
+  components/layout/           Sidebar, header, dashboard shell, SessionProvider (client-side auth guard)
   lib/
-    auth-client.ts           Browser helpers: lookupEmail, signIn, signUp, signOut, sandbox cookie
-    data-service.ts          Single data layer: /api/* when signed in, localStorage in demo mode
-    calculations/finance.ts  All money and date maths (pure, unit-tested)
-    ai/heuristic-parser.ts   Offline extraction fallback (pure, unit-tested)
-    server/                  env, http (errors, rate limit), auth (PBKDF2, sessions), db (row mappers), schemas (zod)
-  types/                     Shared TypeScript types
-tests/calculations.test.mjs  node:test suite importing the real TS modules
+    auth-client.ts             Browser helpers: lookupEmail, signIn, signUp, signOut, demo cookie
+    data-service.ts            Single data layer: /api/* when signed in, localStorage in the demo
+    chat-memory.ts             Chat history + open questions per account in localStorage
+    calculations/finance.ts    Money and date maths, budget periods, spendingWarnings (pure, tested)
+    calculations/invest.ts     Future planner maths: lump sum, SIP, FD interest, inflation (pure, tested)
+    ai/heuristic-parser.ts     Offline extraction fallback (pure, tested)
+    ai/statement-parser.ts     Rule-based statement reader (pure, tested; also bundled into the AI worker)
+    ai/dedupe.ts               Duplicate matching for imports and photos (pure, tested; also in the worker)
+    ai/payee-match.ts          Loose name matching for "map all <name> payments to …" (pure, tested)
+    categories/kinds.ts        Purchase "kinds" and colours used by the timeline and charts
+    server/                    env, http (errors, rate limit), auth (PBKDF2, sessions), db (row mappers),
+                               schemas (zod), ai-worker client, entry-shared, import-jobs
+  types/                       Shared TypeScript types (database, entry, finance)
+tests/                         node:test suites importing the real TS modules
 ```
 
-## 3. Auth
+## 3. Data model (D1)
 
-- One form at `/login`: enter email → `POST /api/auth/lookup` → password step (existing account) or "create your account" step (new email).
-- Passwords: PBKDF2-SHA256, 100k iterations (the Workers maximum), 16-byte salt, stored as `pbkdf2_sha256$iterations$salt$hash`.
-- Sessions: 32-byte random token in the `spendwise_session` cookie (httpOnly, Secure in production, SameSite=Lax, 30 days). D1 stores only SHA-256(token).
-- There is no middleware (OpenNext does not support Next 16's Node `proxy.ts`). Every API route calls `requireUser()`; `SessionProvider` redirects the UI to `/login` when `/api/auth/me` returns 401.
-- Demo: the `spendwise_demo_session` cookie switches `DataService` to localStorage with generated sample data. No server data is involved.
-- Not built yet: password reset (needs an email sender).
+| Table | Notes |
+|---|---|
+| `users` | email (unique, case-insensitive), PBKDF2 hash, display name, currency, timezone, language, monthly_income, `user_type`, `main_goals` (JSON) |
+| `sessions` | SHA-256 of the session token, user id, `expires_at` |
+| `categories` | System categories (`user_id` NULL, fixed ids like `cat-food`, `cat-salary`) plus the user's own; `category_type` expense / income |
+| `transactions` | amount, type, category, description, merchant, payment method, date/time, `essentiality`, `entry_method`, `original_input`, `ai_extraction` (JSON: questions, options, payee), confidence, `user_corrected_classification`, `review_status` (confirmed / pending_review / rejected), notes, `import_job_id` |
+| `budgets` | Overall or per category, period weekly / monthly / quarterly / yearly, alert thresholds |
+| `savings_goals` | Target, saved so far, target date |
+| `import_jobs` | Background statement imports: status, pages / steps done, counts, `events` (live log JSON), `skipped_rows`, error |
 
-## 4. Data rules
+Rules:
+- Signed-in mode never falls back to localStorage. API errors are thrown and shown as a toast.
+- Every write is validated with zod (`src/lib/server/schemas.ts`). Category ownership and type are checked (`assertCategoryUsable`, and in bulk updates by SQL).
+- D1 allows at most 100 bound parameters per query, so bulk reads and updates go in chunks of 90 ids.
 
-- Signed-in mode never falls back to localStorage; any API error is thrown and shown as a toast.
-- Server validates every write with zod (`src/lib/server/schemas.ts`) and checks category ownership and type (`assertCategoryUsable`).
-- System categories have fixed ids (`cat-food`, `cat-salary`, ...) shared by D1 and demo mode.
+## 4. Auth
+
+- **Sign-in form:** there is one form, at `/login`. You enter an email, then `POST /api/auth/lookup` decides the next step: the password step for an existing account, or "create your account" for a new email.
+- **Passwords:** PBKDF2-SHA256 with 100k iterations (the Workers maximum) and a 16-byte salt. They're stored as `pbkdf2_sha256$iterations$salt$hash`.
+- **Sessions:** a 32-byte random token in the `spendwise_session` cookie (httpOnly, Secure in production, SameSite=Lax, 30 days). D1 stores only SHA-256(token).
+- **No middleware:** OpenNext doesn't support Next 16's Node `proxy.ts`. Instead, every API route calls `requireUser()`, and `SessionProvider` redirects the UI to `/login` when `/api/auth/me` returns 401.
+- **Demo:** the `spendwise_demo_session` cookie switches `DataService` to localStorage with generated sample data. AI calls still work (rate-limited per IP). Statements are read inline rather than in the background.
+- **Not built yet:** password reset, which needs an email sender.
 
 ## 5. AI
 
-Models (in `workers/spendwise-ai/wrangler.jsonc`): chat entry and statements use **Llama 4 Scout** (picked by benchmark: 9/9 on our test set, ~3 s median), the coach uses Llama 3.3 70B, voice uses Whisper.
+Models are set in `workers/spendwise-ai/wrangler.jsonc`, and only Cloudflare-hosted (`@cf/…`) models are used.
 
-- **Chat entry** (`/add-expense`, `POST /api/ai/entry` → `/v1/entry`): one message can hold several purchases. The app sends the message, waiting items, recent turns, the user's profile (type, income, goals) and this month's spending by category. The model returns items plus one short `feedback` sentence (no numbers). Items missing an amount, or whose category is genuinely unclear, come back with `needs` + a question (+ tap-to-answer `options`); everything else is saved straight away with Undo/Edit on each line. Bare amounts and option taps are resolved on the client without an AI call.
-- **Amount guard** (worker): every amount must match a number the user actually wrote, used once, closest to that item's words; anything else becomes a question. Stops models copying one item's amount onto another.
-- **Warnings** (`spendingWarnings` in `finance.ts`, deterministic): budgets at 75/90/100%, spending more than earned this month, goals the month's leftover can't fund, single purchases ≥25% of income. Shown under saved entries.
-- **Bank statements** (drop or attach in the chat).
-  - **Reading:** PDF/Excel via `env.AI.toMarkdown()`, CSV parsed in the worker.
-    - Regular layouts (UPI apps: one date, one ₹ amount and a "Paid to / Received from" line per row) are read by code in `src/lib/ai/statement-parser.ts`: exact amounts, dates, times and direction. It is unit-tested and falls back when under 90% of rows parse.
-    - Other layouts are read by Llama 4 Scout page by page, keeping only amounts that appear in the text.
-  - **Sorting:** payees are grouped and the model only sorts payee names into categories (business / person / unclear, 50 per call).
-    - Questions are written in code, one per person, biggest first, and only when the total is ₹500 or more.
-    - Earlier answers (`user_corrected_classification`, payee in `ai_extraction`) are reused, so the same person isn't asked about twice.
-    - Card bill payments and UPI Lite top-ups are dropped, since they would double count.
-  - **Signed-in users run in the background:**
-    - `POST /api/statements` puts the file in R2 and creates an `import_jobs` row.
-    - The `spendwise-statement-import` Workflow in the AI worker runs load job → read file → sort payees N (or read page N) → check duplicates and save, with each step retried and every step logged to `import_jobs.events`.
-    - The chat polls `GET /api/statements/:id` and shows the live log; the import finishes even if the page is closed.
-    - Rows that need an answer are saved as `pending_review` and asked about afterwards. Answers update every payment in the group (`PATCH /api/transactions/bulk`), and "Undo import" deletes by `import_job_id`.
-  - **The demo** uses the inline path (`POST /api/ai/statement` → `/v1/statement`) and bulk-saves through `POST /api/transactions/import`.
-  - **Notes:** D1 allows at most 100 bound parameters per query, so bulk reads and updates go in chunks of 90. Password-protected PDFs are rejected with instructions.
-- **Photos** (camera button in the chat, `POST /api/ai/receipt` → `/v1/receipt`): the browser downsizes the photo to ≤1600px JPEG; Llama 4 Scout (vision) reads bills, receipts, payment screenshots, price tags or the item itself. A bill becomes one entry for the printed final total; the model must name the printed total line ("GRAND TOTAL", "MRP"...) or the app asks for the amount instead. Splits ("with 2 friends") come back as a head count and the worker divides. Any typed text is sent as a caption. Bills already in the ledger are not saved twice (`findDuplicates`), with an "Add anyway" button. Photos are not stored.
-- **Coach** (`/insights`): figures computed by the app plus user type and goals; streamed. The prompt forbids new arithmetic and investment advice.
-- **Memory**: both chats are kept in localStorage per account (`src/lib/chat-memory.ts`) and the last turns are sent as context.
+**Ground rule:** the AI never computes money. Totals, budgets, warnings and projections come from `src/lib/calculations`. Models classify, read and phrase things; code checks what they return.
 
-## 6. Financial maths (`src/lib/calculations/finance.ts`)
+### Chat entry (`/add-expense`: `POST /api/ai/entry` → `/v1/entry`)
 
+**What goes to the model.** The message, up to 10 waiting items, the recent turns, the profile (type, income, goals) and this month's spending by category.
 
-All financial calculations in SpendWise AI are strictly deterministic. **AI is never used to compute financial numbers.**
+**What the model returns:**
+- `items`: several purchases per message.
+- `feedback`: one sentence, with no numbers.
+- `answer_category`: when the message explains what the first open question was for. Long explanations count, e.g. "he's my cousin, I pay him my phone EMI" → Financial Obligations.
+- `rule_payee` + `rule_category`: for "map all Prince Kumar payments to travel" and "X is my rapido driver".
 
-All calculation formulas are located in `src/lib/calculations/finance.ts`:
+**How the app handles items:**
+- Complete items are saved straight away, with Undo and Edit on each line.
+- Items missing an amount, or with a genuinely unclear category, get a question with tap-to-answer options.
 
-### 1. Cashflow & Actual Savings
-$$\text{Total Income} = \sum_{\text{income}} \text{amount}$$
-$$\text{Total Expenses} = \sum_{\text{expense}} \text{amount}$$
-$$\text{Remaining Balance} = \text{Total Income} - \text{Total Expenses}$$
-$$\text{Actual Savings} = \text{Total Income} - \text{Total Expenses} \quad (\text{Net cashflow retained})$$
+**Amount guard (in the worker).** Every amount must match a number the user actually wrote, used once, and closest to that item's words. Anything else becomes a question. This stops models copying one item's amount onto another.
 
-### 2. Budget Utilization & Alert Thresholds
-$$\text{Utilization (\%)} = \left(\frac{\text{Period Expenses}}{\text{Budget Limit}}\right) \times 100$$
-- **On Track:** $< 75\%$
-- **Approaching Limit:** $\ge 75\%$ and $< 90\%$ (Warning badge)
-- **Critical Threshold:** $\ge 90\%$ and $< 100\%$ (Destructive alert)
-- **Over Budget:** $\ge 100\%$ (Ceiling exceeded)
+**Rules (in the client).** A rule applies to every matching open question and every saved entry. Matching uses `namesMatch`, which tolerates typos ("price kumar" → Prince Kumar). Matches are marked `user_corrected_classification` so future imports reuse the choice. A category the user names themselves ("traveling" → Travel) wins over the model's pick.
 
-### 3. Essentiality Breakdown
-- **Essential:** Core sustenance (Housing, Groceries, Utilities, Healthcare, Basic transport).
-- **Optimizable:** Substitutable or reducible costs (Food delivery, cab surges, premium subscriptions).
-- **Discretionary:** Leisure, entertainment, shopping, luxury purchases.
+**Never the same question twice.** A typed answer always resolves the open question. If no category can be worked out, the chat says so instead of repeating itself.
 
-### 4. Suggested Monthly Goal Contribution
-$$\text{Remaining Goal Amount} = \text{Target Amount} - \text{Current Saved}$$
-$$\text{Suggested Monthly} = \frac{\text{Remaining Goal Amount}}{\max(1, \text{Months to Target Date})}$$
+**No AI call needed for:** bare amounts, taps on an option, and "skip".
 
-### 5. Future Wealth Compound Growth Formula
-For principal $P$, annual rate $r$, compounding frequency $n = 12$ (monthly), contribution $PMT$, and time $t$ years:
-$$FV = P \left(1 + \frac{r}{n}\right)^{nt} + PMT \cdot \frac{\left(1 + \frac{r}{n}\right)^{nt} - 1}{\frac{r}{n}}$$
-With inflation adjustment at rate $i$:
-$$FV_{\text{real}} = \frac{FV}{(1 + i)^t}$$
+### Warnings
 
----
+`spendingWarnings` in `finance.ts` is deterministic. It covers:
+- budgets at 75 / 90 / 100%
+- spending more than earned this month
+- goals that the month's leftover can't fund
+- single purchases of 25% or more of income
 
-## 7. Conventions
+Warnings are shown under saved entries.
 
-1. **Dates:** never evaluate `new Date()` during render; set date strings in effects. Build `YYYY-MM-DD` with `toLocalDateString()`, never `toISOString().split('T')[0]` (UTC is the previous day before 05:30 IST). Period ranges live in `finance.ts`.
-2. **Design:** semantic tokens only (`bg-background`, `text-muted-foreground`, `border-border`, `var(--chart-1..5)`). The only hue is `destructive`. Figures use the `tabular` class.
-3. **Imports:** `@/` → `src/`. Modules imported by the tests must use type-only imports so Node can strip them.
+### Bank statements
+
+Statements can be dropped, pasted or attached in the chat: PDF, Excel, CSV or TXT, up to 15 MB in the background and 6 MB inline.
+
+**1. Text.** PDF and Excel go through `env.AI.toMarkdown()`, which marks pages; CSV is parsed in the worker.
+
+**2. Rows.** `parseStatementText` reads regular layouts by rule: one date, one ₹ amount, and "Paid to / Received from / Recharge of / Bill payment of …" per row, as in UPI apps such as Navi, PhonePe and Paytm.
+- Amounts, dates, times and direction come from the file. The model can't get them wrong.
+- If fewer than 90% of the rows with an amount parse, the reader gives up, and Llama 4 Scout reads the statement page by page. In that fallback the amount guard keeps only amounts that appear in the page text.
+
+**3. Left out:** credit-card bill payments and UPI Lite / wallet top-ups, since they would double count.
+
+**4. Payees.** Payees are grouped, and the model only sorts payee names: business / person / unclear, a category, an essentiality and options, 50 payees per call. Earlier answers for a payee are reused without asking.
+
+**5. Questions** are written in code, never by the model:
+- one per person, biggest total first
+- only when the payee is a person or unclear, and the total is ₹500 or more
+- "Keep all as sorted" accepts the rest
+
+**6. Duplicates.** `findDuplicates` skips anything already recorded: same type, amount within ₹1, date within ±3 days, plus shared words or the same confident category.
+
+**Signed-in users: a background Workflow.**
+- `POST /api/statements` puts the file in R2, creates an `import_jobs` row, and calls `/v1/jobs/statement`.
+- The Workflow's steps: `load job` → `read file` → `sort payees N` (or `read page N` in the AI fallback) → `check duplicates and save`.
+- Each step retries on its own, and each one appends a line to `import_jobs.events`.
+- The chat's `ImportJobCard` polls `GET /api/statements/:id` every 1.5 s and shows the live log. The import finishes even if the page is closed, and polling resumes after a reload.
+- Rows that need an answer are saved as `pending_review`. `GET /api/statements/:id/review` turns them into grouped questions, and answers go through `PATCH /api/transactions/bulk`.
+- "Undo import" deletes by `import_job_id`.
+
+**Demo: inline.** `POST /api/ai/statement` → `/v1/statement` uses the same reader. The client de-duplicates and bulk-saves through `POST /api/transactions/import`.
+
+### Photos (`POST /api/ai/receipt` → `/v1/receipt`)
+
+**What can be read.** The browser downsizes the photo to a JPEG of at most 1600px. Llama 4 Scout (vision) reads bills, receipts, payment screenshots, price tags or the item itself.
+
+**One entry per bill.** A bill becomes one entry for the printed final total. The model must name the printed total line, or the app asks for the amount instead.
+
+**Splits.** "With 2 friends" comes back as a head count, and the worker divides.
+
+**Duplicates and storage.** Bills already recorded are not saved twice; "Add anyway" overrides that. Photos are not stored.
+
+### Coach (`/insights`) and Future planner
+
+- **Coach.** It receives figures the app computed, plus the user type and goals, and its replies are streamed. The prompt forbids new arithmetic and personal investment advice.
+- **Future planner, Simple view.** It uses the user's own averages over the last 90 days: income, spending, and could-trim + optional spending. It shows the biggest optional purchases of the last 60 days, and what they or a monthly trim could become at example rates (FD 7%, debt fund 8%, index fund 12%, stocks 14%).
+- **Planner AI explanation.** The coach explains the figures in 2–4 sentences and may only quote figures it was given.
+- **Future planner, Advanced view.** The full calculator, with editable rates.
+- Everything is labelled as examples for learning, not financial advice.
+
+### Memory
+
+Both chats are kept in localStorage per account (`chat-memory.ts`), and the last turns are sent as context. Open questions are kept too. Older saved queues are regrouped one per person when they load.
+
+## 6. Financial maths
+
+All financial calculations are deterministic and unit-tested. They live in `src/lib/calculations/finance.ts` and `invest.ts`.
+
+### Cashflow
+$$\text{Income} = \sum_{\text{income}} \text{amount},\qquad \text{Expenses} = \sum_{\text{expense}} \text{amount},\qquad \text{Saved} = \text{Income} - \text{Expenses}$$
+
+### Budgets
+$$\text{Used (\%)} = \frac{\text{Spent in period}}{\text{Budget}} \times 100$$
+On track below 75%, nearly used at 75–90%, critical at 90–100%, over budget at 100% or more. Periods (weekly / monthly / quarterly / yearly) are computed in local time.
+
+### Essentiality
+- **Essential:** rent, groceries, utilities, health, basic commute.
+- **Could trim** (`optimizable`): needed but reducible, e.g. food delivery, cabs, subscriptions.
+- **Optional** (`discretionary`): wants, e.g. entertainment, gadgets, clothes, trips.
+
+### Goals
+$$\text{Suggested monthly} = \frac{\text{Target} - \text{Saved}}{\max(1, \text{months to target date})}$$
+
+### Growth (planner)
+Monthly compounding, with $r$ the yearly rate, $t$ years, $P$ a lump sum and $PMT$ a monthly amount:
+$$FV = P\left(1+\tfrac{r}{12}\right)^{12t} + PMT\cdot\frac{\left(1+\tfrac{r}{12}\right)^{12t}-1}{r/12}$$
+In today's money at inflation $i$: $FV_{\text{real}} = FV / (1+i)^t$. Monthly FD-style interest is $P \cdot r / 12$.
+
+## 7. Design: "Ledger"
+
+Drawn from Mercury, Linear, Stripe and Copilot Money:
+
+- **Layout:** a warm paper canvas (`--canvas`) with content on a raised sheet (`--card`, `shadow-sheet`).
+- **Few boxes:** sections are separated by whitespace and hairlines, not cards.
+- **Type:** Instrument Serif (`font-display`) for page titles and the single hero figure on a page; Geist for everything else.
+- **Amounts:** always `<Money>`, with tabular figures and small raised paise. A row of figures is a `MetricStrip`.
+- **Colour:** ink (`bg-primary`) for primary buttons, and one signature colour, `--brand` emerald, for progress, active state and positive amounts. Kind colours appear only in data dots, bars and tiles. Status colours are `success`, `warning` and `destructive`; spending types use `--essential`, `--trim` and `--optional`.
+- **Charts:** no containers or grid lines, the primary series in `var(--brand)`, comparisons dashed.
+- **Light and dark** are both defined in `globals.css`.
+
+## 8. Conventions
+
+1. **Dates.** Never evaluate `new Date()` during render (it causes hydration mismatches); set dates in effects.
+   - Build `YYYY-MM-DD` with `toLocalDateString()`, never `toISOString().split('T')[0]`, which gives the previous day before 05:30 IST.
+   - Period ranges live in `finance.ts`.
+2. **Imports.** `@/` maps to `src/`.
+   - Modules the tests import must have no relative runtime imports (type-only imports are fine), so Node can strip types and load them directly.
+   - Code shared with the AI worker (`statement-parser`, `dedupe`) must be pure.
+3. **Copy.** Keep it friendly and plain, for people who aren't comfortable with technology: no jargon, no emoji, no exclamation spam.
 4. **Icons:** lucide-react. **Toasts:** sonner.
-
-## 8. Run, test, deploy
-
-See [README.md](./README.md).
+5. **Next.js 16.** This version has breaking changes. Read `node_modules/next/dist/docs/` before using an unfamiliar API (see `AGENTS.md`).

@@ -1,54 +1,41 @@
-# SpendWise AI — Development Roadmap & TODO
+# SpendWise roadmap
 
-## Status Overview
-- [x] **Phase 1: Project Foundation & Layout**
-  - [x] Initialize Next.js 16+ (App Router, TypeScript, Tailwind CSS, Lucide icons, component library).
-  - [x] Set up fintech design system (light/dark theme, typography, color tokens).
-  - [x] Implement persistent responsive navigation (Desktop sidebar, Mobile navigation, Header).
-  - [x] Scaffold core routes: Dashboard, Transactions, Add Expense, Budgets, AI Insights, Reports, Goals, Wealth Simulator, Settings, Auth.
-  - [x] Set up Supabase SSR architecture (`@supabase/ssr`), `.env.example`, `.env.local`, and PostgreSQL migration schemas with RLS.
-  - [x] Documentation & README for running locally and connecting Supabase.
+## Done
 
-- [x] **Phase 2: Authentication & User Profiles**
-  - [x] Supabase Auth (Sign Up, Login, Forgot Password, Session management).
-  - [x] Onboarding flow (Display name, INR currency default, Asia/Kolkata timezone, optional income/budget).
-  - [x] User profile and financial preferences storage with RLS policies.
-  - [x] Seamless local sandbox fallback mode for immediate development and testing without remote credentials.
+- [x] **Foundation:** Next.js 16 app with dashboard, spending list, budgets, goals, reports, coach, planner and settings.
+- [x] **Cloudflare-native:**
+  - [x] D1 database and the app's own email + password auth (one email-first form).
+  - [x] Deployed with OpenNext.
+  - [x] Demo mode that runs in the browser.
+- [x] **AI worker** (`workers/spendwise-ai`), using Cloudflare-hosted models only, with an offline fallback when AI is down.
+- [x] **Chat entry:**
+  - [x] Several purchases per message, English and Hinglish, voice.
+  - [x] Questions only for what's missing, with tap-to-answer options.
+  - [x] Feedback on each purchase and exact budget / goal warnings.
+- [x] **User type and goals** shape questions, feedback and the coach.
+- [x] **Photos:** bills, receipts, payment screenshots and items (vision). Uses the printed total only, with splits divided in code.
+- [x] **Bank statements:**
+  - [x] Drag and drop.
+  - [x] Background import (R2 + Workflow) with a live log.
+  - [x] Rule-based reading of UPI-app statements, with AI used only to sort payees.
+  - [x] Duplicate skipping; card bills and top-ups left out.
+  - [x] One question per person, and Undo.
+- [x] **Plain-language commands** ("map all X payments to travel"). Answers of any length are accepted and remembered for future imports.
+- [x] **Timeline** coloured by kind of purchase.
+- [x] **"Ledger" redesign** across every page, light and dark.
+- [x] **Future planner:**
+  - [x] Simple view from your own data ("instead of buying it", trim and invest, AI explanation).
+  - [x] Advanced calculator.
 
-- [x] **Phase 3: Core Transaction Management**
-  - [x] Manual transaction entry (Income/Expense, categories, tags, payment methods, timestamps).
-  - [x] System & custom user categories with ownership checks.
-  - [x] Transaction ledger with search, multi-filter (type, category, essentiality), and date/amount sorting.
-  - [x] Delete with confirmation dialog and ledger synchronization.
+## Next
 
-- [x] **Phase 4: Smart AI & Voice Expense Capture**
-  - [x] Server-side AI extraction endpoint (`/api/ai/extract` with OpenAI structured JSON schema + deterministic heuristic rule parser fallback).
-  - [x] Natural language parser (extracting amount, merchant, category, essentiality, confidence).
-  - [x] Browser Web Speech API integration for one-tap voice transcription with graceful fallback.
-  - [x] Interactive review & confirmation drawer before saving (preserves raw input vs. confirmed data).
-
-- [x] **Phase 5: Dashboard Analytics & Budget Management**
-  - [x] Financial KPIs (Total Income, Total Expenses, Remaining Balance, Actual Savings, Budget Utilization).
-  - [x] Recharts visualizations (Spending trends, Income vs Expense, Category breakdown, Essentiality breakdown).
-  - [x] Budget builder (Overall & category-specific) with 75%, 90%, 100% threshold alert badges.
-
-- [x] **Phase 6: AI Spending Insights, Coach & Reports**
-  - [x] Deterministic mathematical analysis engine + qualitative AI narrative generator.
-  - [x] Interactive AI spending coach chat interface (RAG over user's aggregate spending).
-  - [x] Reports generator (Weekly, Monthly, Annual) with CSV export and print styling.
-
-- [x] **Phase 7: Savings Goals & Wealth Simulator**
-  - [x] Savings goals tracker (Emergency fund, purchases, target dates, progress bar, suggested monthly contributions).
-  - [x] Actual savings vs. Potential savings scenario calculator.
-  - [x] Educational compound interest wealth projection simulator (5–20 yrs, chart comparisons, disclaimers).
-
-- [x] **Phase 8: Quality Assurance, Security & Deployment**
-  - [x] Unit & calculation tests (math formulas, date/timezone handling, RLS isolation verification).
-  - [x] Production build validation (`npm run build`), zero TypeScript/lint errors.
-
-- [x] **Phase 9: Cloudflare-native rebuild**
-  - [x] Replaced Supabase with Cloudflare D1 and the app's own email + password auth (single email-first form).
-  - [x] Workers AI worker (`workers/spendwise-ai`): JSON-mode extraction, streamed money coach, Whisper voice capture.
-  - [x] Deployed with OpenNext to Cloudflare Workers.
-  - [x] Monochrome design system and redesign of every page.
-  - [ ] Password reset (needs an email sender).
+- [ ] **Account:** password reset (needs an email sender), data export, delete my account.
+- [ ] **Statements:**
+  - [ ] Clean up uploaded files from R2 after import (retention policy).
+  - [ ] Rule-based readers for common bank layouts (HDFC, SBI, ICICI tables with debit / credit / balance columns).
+  - [ ] Password-protected PDFs: ask for the password in the chat instead of asking for an unlocked copy.
+- [ ] **Learning:** show and edit "rules" (payee → category) in Settings.
+- [ ] **Recurring payments:** detect rent, EMIs and subscriptions and remind before they're due.
+- [ ] **Shared expenses:** split with family or friends, and settle up.
+- [ ] **Reports:** a monthly email or PDF summary.
+- [ ] **Tests:** end-to-end tests for the chat, imports and sign-in.

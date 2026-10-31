@@ -43,6 +43,7 @@ next-env.d.ts
 
 # wrangler local secrets
 .dev.vars*
+!.dev.vars.example
 
 # OpenNext build output
 /.open-next/
